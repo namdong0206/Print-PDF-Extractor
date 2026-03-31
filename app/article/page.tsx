@@ -96,10 +96,15 @@ function ArticleContent() {
         <article className="space-y-8">
           <div className="flex items-center justify-between gap-4 text-sm bg-gray-50 p-3 rounded-lg border border-gray-100">
             <span className="text-gray-600 truncate font-mono">{currentUrl}</span>
-            <button onClick={copyToClipboard} className="flex items-center gap-1 text-[#F27D26] hover:text-[#d66d1f] font-bold">
-              {copied ? <Check size={16} /> : <Copy size={16} />}
-              {copied ? 'Đã copy' : 'Copy'}
-            </button>
+            <div className="flex items-center gap-4">
+              <Link href={`/api/article/raw/${article.id}`} target="_blank" rel="noopener noreferrer" className="text-[#F27D26] hover:text-[#d66d1f] font-bold">
+                Xem trang riêng
+              </Link>
+              <button onClick={copyToClipboard} className="flex items-center gap-1 text-[#F27D26] hover:text-[#d66d1f] font-bold">
+                {copied ? <Check size={16} /> : <Copy size={16} />}
+                {copied ? 'Đã copy' : 'Copy'}
+              </button>
+            </div>
           </div>
           <h1 className="text-4xl md:text-5xl font-serif font-bold leading-tight text-gray-900">
             {article.title}
