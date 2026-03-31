@@ -4,9 +4,9 @@ import { db } from '@/lib/firebase';
 
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = params;
+  const { id } = await params;
 
   try {
     const docRef = doc(db, 'articles', id);
