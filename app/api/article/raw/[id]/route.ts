@@ -6,16 +6,20 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  console.log('DEBUG: ID nhận được từ params:', id);
 
   try {
+    console.log('DEBUG: Đang truy vấn Firestore với ID:', id);
     const docRef = doc(db, 'articles', id);
     const docSnap = await getDoc(docRef);
 
     if (!docSnap.exists()) {
-      return new Response('Bài báo không tồn tại', { status: 404 });
+      console.log('DEBUG: Không tìm thấy bài báo với ID:', id);
+      return new Response(`Bài báo không tồn tại. ID: ${id}`, { status: 404 });
     }
-
+    
     const article = docSnap.data();
+    console.log('DEBUG: Đã tìm thấy bài báo:', article.title);
 
     const html = `
       <!DOCTYPE html>
