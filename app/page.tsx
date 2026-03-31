@@ -1,6 +1,6 @@
 'use client';
 
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, collection, getDocs, deleteDoc } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 
@@ -268,12 +268,26 @@ function NewspaperLayoutContent() {
 
   if (!isClient) return null;
 
+  const clearOldArticles = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, 'articles'));
+      const deletePromises = querySnapshot.docs.map(document => 
+        deleteDoc(doc(db, 'articles', document.id))
+      );
+      await Promise.all(deletePromises);
+    } catch (error) {
+      console.error("Error clearing old articles from Firestore:", error);
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFiles = event.target.files;
     if (!uploadedFiles || uploadedFiles.length === 0) return;
 
     // Xóa toàn bộ dữ liệu phiên làm việc trước
     localStorage.removeItem('extracted_articles');
+    await clearOldArticles();
+    
     const newFiles = Array.from(uploadedFiles);
     setFiles(newFiles);
     setCurrentFileIndex(0);
