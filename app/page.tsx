@@ -1,5 +1,7 @@
 'use client';
 
+import { doc, setDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import NextImage from 'next/image';
 import { motion, AnimatePresence } from 'motion/react';
@@ -443,6 +445,12 @@ function NewspaperLayoutContent() {
     const merged = mergeArticles(allArticles);
     setArticles(merged);
     localStorage.setItem('extracted_articles', JSON.stringify(merged));
+    
+    // Save to Firestore
+    for (const article of merged) {
+      await setDoc(doc(db, 'articles', article.id), article);
+    }
+    
     setProcessingTime((Date.now() - startTime) / 1000);
   };
 
@@ -460,6 +468,12 @@ function NewspaperLayoutContent() {
     const merged = mergeArticles(allArticles);
     setArticles(merged);
     localStorage.setItem('extracted_articles', JSON.stringify(merged));
+    
+    // Save to Firestore
+    for (const article of merged) {
+      await setDoc(doc(db, 'articles', article.id), article);
+    }
+    
     setProcessingTime((Date.now() - startTime) / 1000);
   };
 
@@ -640,7 +654,7 @@ function NewspaperLayoutContent() {
                   <h1 className="text-3xl font-serif font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
                   <div className="flex items-center gap-2">
                     <a 
-                      href={`/article?id=${encodeURIComponent(selectedArticle.id)}`} 
+                      href={`/api/article/raw/${selectedArticle.id}`} 
                       target="_blank" 
                       rel="noopener noreferrer"
                       className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"

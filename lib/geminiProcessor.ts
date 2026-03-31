@@ -333,7 +333,7 @@ export async function extractArticlesHybrid(
     const rawResult = JSON.parse(responseText);
     
     return rawResult.map((art: any, index: number) => ({
-      id: `${fileName}-${pageNumber}-${index}-${Date.now()}`,
+      id: `${fileName}-${pageNumber}-${index}`,
       title: art.title || "Không có tiêu đề",
       author: art.author || "",
       lead: art.lead || "",
