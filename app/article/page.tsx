@@ -3,7 +3,7 @@
 import React, { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Article } from '@/lib/geminiProcessor';
-import { Layout, FileText, ChevronLeft } from 'lucide-react';
+import { Layout, FileText, ChevronLeft, Copy, Check } from 'lucide-react';
 import Link from 'next/link';
 
 function ArticleContent() {
@@ -12,6 +12,13 @@ function ArticleContent() {
     article: null,
     loading: true
   });
+  const [copied, setCopied] = useState(false);
+  const [currentUrl, setCurrentUrl] = useState('');
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    setCurrentUrl(window.location.href);
+  }, [state.article]);
 
   useEffect(() => {
     const id = searchParams.get('id');
@@ -36,6 +43,15 @@ function ArticleContent() {
     
     return () => clearTimeout(timer);
   }, [searchParams]);
+
+  const copyToClipboard = () => {
+    if (typeof window !== 'undefined') {
+      navigator.clipboard.writeText(window.location.href).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
+  };
 
   const { article, loading } = state;
 
@@ -78,6 +94,13 @@ function ArticleContent() {
 
       <main className="max-w-3xl mx-auto p-6 md:p-12 bg-white shadow-sm mt-8 rounded-2xl border border-gray-100">
         <article className="space-y-8">
+          <div className="flex items-center justify-between gap-4 text-sm bg-gray-50 p-3 rounded-lg border border-gray-100">
+            <span className="text-gray-600 truncate font-mono">{currentUrl}</span>
+            <button onClick={copyToClipboard} className="flex items-center gap-1 text-[#F27D26] hover:text-[#d66d1f] font-bold">
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+              {copied ? 'Đã copy' : 'Copy'}
+            </button>
+          </div>
           <h1 className="text-4xl md:text-5xl font-serif font-bold leading-tight text-gray-900">
             {article.title}
           </h1>
