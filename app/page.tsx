@@ -3,6 +3,36 @@
 import { doc, setDoc, collection, getDocs, deleteDoc } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import NextImage from 'next/image';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Upload, 
+  Layout, 
+  ChevronLeft, 
+  ChevronRight, 
+  Maximize2, 
+  FileText, 
+  Image as ImageIcon, 
+  Layers, 
+  Scissors,
+  Info,
+  CheckCircle2,
+  Copy,
+  Loader2,
+  AlertCircle,
+  Box,
+  ExternalLink,
+  Download,
+  FileDown
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { parseNewspaperLayout, parseNewspaperLayoutHybrid } from '@/lib/layoutService';
+import { ArticleRegion, BoundingBox } from '@/lib/types';
+import { segmentRegions, Region, groupBoxesByArticleRegion } from '@/lib/segmentationService';
+import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles } from '@/lib/geminiProcessor';
+import { processArticleContent } from '@/lib/textProcessor';
+import { HLAZone } from '@/lib/hlaService';
+import { exportArticleToWord, exportAllArticlesToZip } from '@/lib/wordExport';
 
 enum OperationType {
   CREATE = 'create',
@@ -54,36 +84,6 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
-import NextImage from 'next/image';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Upload, 
-  Layout, 
-  ChevronLeft, 
-  ChevronRight, 
-  Maximize2, 
-  FileText, 
-  Image as ImageIcon, 
-  Layers, 
-  Scissors,
-  Info,
-  CheckCircle2,
-  Copy,
-  Loader2,
-  AlertCircle,
-  Box,
-  ExternalLink,
-  Download,
-  FileDown
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { parseNewspaperLayout, parseNewspaperLayoutHybrid } from '@/lib/layoutService';
-import { ArticleRegion, BoundingBox } from '@/lib/types';
-import { segmentRegions, Region, groupBoxesByArticleRegion } from '@/lib/segmentationService';
-import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles } from '@/lib/geminiProcessor';
-import { processArticleContent } from '@/lib/textProcessor';
-import { HLAZone } from '@/lib/hlaService';
-import { exportArticleToWord, exportAllArticlesToZip } from '@/lib/wordExport';
 
 // Dynamic imports for browser-only libraries
 // We'll load pdfjs inside the component to avoid global state issues
@@ -266,7 +266,7 @@ function NewspaperLayoutContent() {
     }
   }, [selectedArticle]);
 
-  if (!isClient) return null;
+  if (!isClient) return <div className="min-h-screen bg-[#FDFCFB]" />;
 
   const clearOldArticles = async () => {
     try {
@@ -450,6 +450,20 @@ function NewspaperLayoutContent() {
       chunks.push(indices.slice(i, i + concurrency));
     }
 
+    const handleArticleParsed = (article: Article) => {
+      const isMultiPage = !!article.seePage;
+      
+      if (!isMultiPage) {
+        setArticles(prev => {
+          if (prev.some(a => a.id === article.id)) return prev;
+          const newArticles = [...prev, article];
+          // Save standalone articles to Firestore immediately during stream
+          setDoc(doc(db, 'articles', article.id), article).catch(e => console.error("Error saving streamed article:", e));
+          return newArticles;
+        });
+      }
+    };
+
     for (const chunk of chunks) {
       const chunkResults = await Promise.all(chunk.map(async (index) => {
         setProcessingFileIndices(prev => new Set(prev).add(index));
@@ -481,7 +495,7 @@ function NewspaperLayoutContent() {
           if (context) {
             await page.render({ canvasContext: context, viewport: renderViewport }).promise;
             const image = canvas.toDataURL('image/webp', 0.8);
-            return await handleExtractArticles(pdfDoc, image, 1, file.name);
+            return await handleExtractArticles(pdfDoc, image, 1, file.name, handleArticleParsed);
           }
           return [];
         } catch (error) {
@@ -573,7 +587,7 @@ function NewspaperLayoutContent() {
     }
   };
 
-  const handleExtractArticles = async (pdfDoc: any, image: string, pageNum: number, fileName: string): Promise<Article[]> => {
+  const handleExtractArticles = async (pdfDoc: any, image: string, pageNum: number, fileName: string, onArticleParsed?: (article: Article) => void): Promise<Article[]> => {
     if (!pdfDoc) return [];
 
     try {
@@ -587,7 +601,7 @@ function NewspaperLayoutContent() {
       setHlaZones(zones);
       
       // 2. Semantic Extraction (Gemini 3 Flash - Multimodal)
-      const extractedArticles = await extractArticlesHybrid(zones, pageNum, fileName, image);
+      const extractedArticles = await extractArticlesHybrid(zones, pageNum, fileName, image, onArticleParsed);
       
       return extractedArticles;
     } catch (error) {
@@ -777,12 +791,6 @@ function NewspaperLayoutContent() {
                     <CopyButton text={selectedArticle.author} label="Tác giả" />
                   </div>
                 )}
-                {selectedArticle.lead && (
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="text-lg font-bold text-gray-800 italic">{selectedArticle.lead}</div>
-                    <CopyButton text={selectedArticle.lead} label="Sapo" />
-                  </div>
-                )}
                 <div className="space-y-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-4">
@@ -805,7 +813,6 @@ function NewspaperLayoutContent() {
                     text={[
                       selectedArticle.title,
                       selectedArticle.author ? `Tác giả: ${selectedArticle.author}` : '',
-                      selectedArticle.lead,
                       ...selectedArticle.content,
                       selectedArticle.imageCaption ? `Chú thích ảnh: ${selectedArticle.imageCaption}` : ''
                     ].filter(Boolean).join('\n\n')} 

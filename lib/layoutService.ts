@@ -138,7 +138,7 @@ function mergeBoxes(boxes: BoundingBox[], threshold = 5, pageWidth?: number): Bo
         // Special case for vertical merging of content in columns
         const isVerticalContent = (boxA.label === 'Content' || boxA.label === 'Sapo' || boxA.label === 'Headline' || boxA.label === 'Footer Note') &&
                                  Math.abs(boxA.x - boxB.x) < 20 && // Similar X
-                                 Math.abs(boxA.width - boxB.width) < 40 && // Similar width
+                                 (boxA.label === 'Headline' || Math.abs(boxA.width - boxB.width) < 40) && // Similar width (relaxed for Headline)
                                  (boxB.y - (boxA.y + boxA.height) < 30); // Close vertically
           
         // Do not merge lines
@@ -810,8 +810,8 @@ export const parseNewspaperLayout = async (page: any, pageImage?: string): Promi
       } else if (isBottomZone && (matchesFooter || (text.toUpperCase() === text && text.length < 20))) {
         label = 'Footer';
       }
-      // 1. Tiêu đề: UTM-Aurora, size >= 30
-      else if (fontName.includes('UTM-Aurora') && fontSize >= 30) {
+      // 1. Tiêu đề: UTM-Aurora (hoặc chứa Aurora), size >= 30
+      else if ((fontName.includes('Aurora') || fontName.includes('UTM-Aurora')) && fontSize >= 30) {
         label = 'Headline';
       }
       // 2. Tác giả: Theky-ND-Century|sc725BTBolCon-Bold, size <= 10

@@ -85,7 +85,6 @@ export async function GET(
           body { font-family: sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 800px; margin: 40px auto; padding: 20px; }
           h1 { font-size: 2.5rem; font-weight: bold; margin-bottom: 20px; }
           .meta { color: #666; margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
-          .lead { font-size: 1.25rem; font-weight: bold; font-style: italic; margin-bottom: 30px; color: #333; }
           p { margin-bottom: 20px; font-size: 1.1rem; }
         </style>
       </head>
@@ -94,7 +93,6 @@ export async function GET(
         <div class="meta">
           <p>Tác giả: ${article.author || 'Không rõ'}</p>
         </div>
-        ${article.lead ? `<div class="lead">${article.lead}</div>` : ''}
         <div class="content">
           ${article.content.map((para: string) => `<p>${para}</p>`).join('')}
         </div>

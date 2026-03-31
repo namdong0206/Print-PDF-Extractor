@@ -18,7 +18,6 @@ export interface Article {
   articleRegionId: string;
   title: string;
   author: string;
-  lead: string;
   content: string[];
   imageCaption: string;
   seePage: string;
@@ -80,7 +79,45 @@ export function mergeArticles(articles: Article[]): Article[] {
   };
 
   for (const article of articles) {
-    const existingIndex = merged.findIndex(a => isSimilarTitle(a.title, article.title));
+    let existingIndex = merged.findIndex(a => isSimilarTitle(a.title, article.title));
+    
+    if (existingIndex === -1) {
+      // Try to match by seePage cues if title matching fails
+      existingIndex = merged.findIndex(a => {
+        const cleanSeePage = (s: string) => s.replace(/[()]/g, "").trim();
+        const aSeePage = cleanSeePage(a.seePage || "");
+        const artSeePage = cleanSeePage(article.seePage || "");
+
+        const regexStart = /xem (tiếp )?trang (\d+)/i;
+        const regexCont = /tiếp (theo|từ) trang (\d+)/i;
+
+        const aStart = regexStart.exec(aSeePage);
+        const artCont = regexCont.exec(artSeePage);
+        
+        if (aStart && artCont) {
+          const targetPage = parseInt(aStart[2]);
+          const sourcePage = parseInt(artCont[2]);
+          
+          if (article.pageNumbers.includes(targetPage) && a.pageNumbers.includes(sourcePage)) {
+            return true;
+          }
+        }
+        
+        const artStart = regexStart.exec(artSeePage);
+        const aCont = regexCont.exec(aSeePage);
+        
+        if (artStart && aCont) {
+          const targetPage = parseInt(artStart[2]);
+          const sourcePage = parseInt(aCont[2]);
+          
+          if (a.pageNumbers.includes(targetPage) && article.pageNumbers.includes(sourcePage)) {
+            return true;
+          }
+        }
+        
+        return false;
+      });
+    }
     
     if (existingIndex !== -1) {
       const existing = merged[existingIndex];
@@ -118,7 +155,6 @@ export function mergeArticles(articles: Article[]): Article[] {
       
       existing.pageNumbers = [...new Set([...existing.pageNumbers, ...article.pageNumbers])].sort((a, b) => a - b);
       
-      if (!existing.lead && article.lead) existing.lead = article.lead;
       if (!existing.author && article.author) existing.author = article.author;
       if (!existing.imageCaption && article.imageCaption) existing.imageCaption = article.imageCaption;
     } else {
@@ -223,6 +259,55 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
   }
 }
 
+function extractCompleteObjects(jsonString: string): any[] {
+  const objects: any[] = [];
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+  let startIndex = -1;
+
+  for (let i = 0; i < jsonString.length; i++) {
+    const char = jsonString[i];
+
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (char === '{') {
+        if (depth === 0) {
+          startIndex = i;
+        }
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0 && startIndex !== -1) {
+          try {
+            const objStr = jsonString.substring(startIndex, i + 1);
+            objects.push(JSON.parse(objStr));
+          } catch (e) {
+            // Ignore parse errors for partial/invalid objects
+          }
+          startIndex = -1;
+        }
+      }
+    }
+  }
+
+  return objects;
+}
+
 /**
  * Bước 2 & 3: Gọi API Gemini để xử lý bài báo (Hybrid: HLA Zones + Text)
  */
@@ -230,7 +315,8 @@ export async function extractArticlesHybrid(
   zones: HLAZone[],
   pageNumber: number,
   fileName: string,
-  base64Image?: string
+  base64Image?: string,
+  onArticleParsed?: (article: Article) => void
 ): Promise<Article[]> {
   console.log("--- [DEBUG] extractArticlesHybrid called ---");
   
@@ -271,10 +357,11 @@ export async function extractArticlesHybrid(
      - Tìm các chỉ dẫn "Tiếp theo trang ..." hoặc "Tiếp từ trang ..." ở đầu bài báo (thường là phần tiếp theo ở trang khác).
      - Lưu các chỉ dẫn này vào trường "seePage".
      - TUYỆT ĐỐI KHÔNG bao gồm các chỉ dẫn này trong mảng "content".
-  3. TIÊU ĐỀ BÀI NỐI: Tiêu đề ở các trang khác nhau của cùng một bài báo sẽ rất giống nhau (ít nhất 80% phần đầu). Hãy giữ nguyên tiêu đề gốc để hệ thống có thể ghép lại.
-  4. LOẠI BỎ hoàn toàn: Chú thích ảnh (Caption), Header, Footer, Quảng cáo, Số trang.
-  5. Ghép các đoạn văn (Content) theo đúng thứ tự logic. Nếu một bài bị chia ra nhiều Zone trong cùng 1 trang, hãy ghép lại ngay.
-  6. KHÔNG lặp lại Tiêu đề (Title) trong phần Nội dung (Content).
+  3. TIÊU ĐỀ BÀI NỐI: Tiêu đề ở các trang khác nhau của cùng một bài báo sẽ rất giống nhau (ít nhất 80% phần đầu). Hãy giữ nguyên tiêu đề gốc để hệ thống có thể ghép lại. Nếu bài báo là phần tiếp theo từ trang trước, hãy trích xuất chính xác tiêu đề của bài báo đó (thường được in đậm hoặc in hoa nhỏ ở đầu phần tiếp theo) để làm "title".
+  4. GỘP SAPO VÀ TÍT PHỤ VÀO CONTENT: KHÔNG tách riêng Sapo (Lead) hay Tít phụ (Subtitle). Hãy gộp toàn bộ Sapo, Tít phụ và Nội dung bài viết vào chung mảng "content" theo đúng thứ tự đọc từ trên xuống dưới. Điều này rất quan trọng để tránh đảo lộn thứ tự.
+  5. LOẠI BỎ hoàn toàn: Chú thích ảnh (Caption), Header, Footer, Quảng cáo, Số trang.
+  6. Ghép các đoạn văn (Content) theo đúng thứ tự logic. Nếu một bài bị chia ra nhiều Zone trong cùng 1 trang, hãy ghép lại ngay.
+  7. KHÔNG lặp lại Tiêu đề (Title) trong phần Nội dung (Content).
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
@@ -298,7 +385,7 @@ export async function extractArticlesHybrid(
       contents.push({ parts: [{ text: prompt }] });
     }
 
-    const response = await ai.models.generateContent({
+    const responseStream = await ai.models.generateContentStream({
       model: MODEL,
       contents: contents,
       config: {
@@ -312,7 +399,6 @@ export async function extractArticlesHybrid(
             properties: {
               title: { type: Type.STRING },
               author: { type: Type.STRING },
-              lead: { type: Type.STRING },
               content: { 
                 type: Type.ARRAY,
                 items: { type: Type.STRING }
@@ -325,26 +411,48 @@ export async function extractArticlesHybrid(
       },
     });
 
+    let fullText = "";
+    const emittedIds = new Set<string>();
+    const finalArticles: Article[] = [];
+
+    for await (const chunk of responseStream) {
+      if (chunk.text) {
+        fullText += chunk.text;
+        
+        const parsedObjects = extractCompleteObjects(fullText);
+        
+        for (let i = 0; i < parsedObjects.length; i++) {
+          const art = parsedObjects[i];
+          const id = `${fileName}-${pageNumber}-${i}`;
+          
+          if (!emittedIds.has(id)) {
+            emittedIds.add(id);
+            
+            const article: Article = {
+              id,
+              title: art.title || "Không có tiêu đề",
+              author: art.author || "",
+              content: (Array.isArray(art.content) ? art.content : [])
+                .map((p: string) => p.trim())
+                .filter((p: string) => p.length > 0),
+              imageCaption: "",
+              seePage: art.seePage || "",
+              pageNumbers: [pageNumber],
+              fileName: fileName,
+              articleRegionId: ""
+            };
+            
+            finalArticles.push(article);
+            if (onArticleParsed) {
+              onArticleParsed(article);
+            }
+          }
+        }
+      }
+    }
+
     console.timeEnd("GeminiAPITime");
-
-    if (!response || !response.text) throw new Error("No response from Gemini");
-
-    const responseText = response.text.trim();
-    const rawResult = JSON.parse(responseText);
-    
-    return rawResult.map((art: any, index: number) => ({
-      id: `${fileName}-${pageNumber}-${index}`,
-      title: art.title || "Không có tiêu đề",
-      author: art.author || "",
-      lead: art.lead || "",
-      content: (Array.isArray(art.content) ? art.content : [])
-        .map((p: string) => p.trim())
-        .filter((p: string) => p.length > 0),
-      imageCaption: "", // Đã lọc bỏ ở prompt
-      seePage: art.seePage || "",
-      pageNumbers: [pageNumber],
-      fileName: fileName
-    }));
+    return finalArticles;
   } catch (error) {
     console.timeEnd("GeminiAPITime");
     console.error("Error in extractArticlesHybrid:", error);

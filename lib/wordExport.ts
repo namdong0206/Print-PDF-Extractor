@@ -60,22 +60,6 @@ export const generateWordDocument = async (article: Article): Promise<Blob> => {
     );
   }
 
-  // Lead
-  if (article.lead) {
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: article.lead,
-            italics: true,
-            bold: true,
-          }),
-        ],
-        spacing: { after: 200 },
-      })
-    );
-  }
-
   // Content
   article.content.forEach((para) => {
     children.push(

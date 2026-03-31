@@ -207,7 +207,6 @@ export const groupTextBlocksIntoArticles = (textBlocks: TextBlock[], regions: Ar
       articleRegionId: regionId,
       title: sortedBoxes[0]?.text || "Không có tiêu đề",
       author: "",
-      lead: "",
       content: sortedBoxes.map(b => b.text || ""),
       imageCaption: "",
       seePage: "",

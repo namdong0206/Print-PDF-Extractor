@@ -125,12 +125,6 @@ function ArticleContent() {
             </span>
           </div>
 
-          {article.lead && (
-            <div className="text-xl md:text-2xl font-bold text-gray-800 italic leading-snug border-l-4 border-[#F27D26] pl-6 py-2">
-              {article.lead}
-            </div>
-          )}
-
           <div className="space-y-6">
             {article.content.map((para, i) => (
               <p key={i} className="text-gray-800 leading-relaxed text-xl">
