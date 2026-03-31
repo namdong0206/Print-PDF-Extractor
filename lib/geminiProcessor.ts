@@ -372,7 +372,7 @@ export async function extractArticlesHybrid(
      - TUYỆT ĐỐI KHÔNG bao gồm các chỉ dẫn này trong mảng "content".
   4. TIÊU ĐỀ BÀI NỐI: Tiêu đề ở các trang khác nhau của cùng một bài báo sẽ rất giống nhau (ít nhất 80% phần đầu). Hãy giữ nguyên tiêu đề gốc để hệ thống có thể ghép lại. Nếu bài báo là phần tiếp theo từ trang trước, hãy trích xuất chính xác tiêu đề của bài báo đó (thường được in đậm hoặc in hoa nhỏ ở đầu phần tiếp theo) để làm "title".
   5. GỘP SAPO VÀ TÍT PHỤ VÀO CONTENT: KHÔNG tách riêng Sapo (Lead) hay Tít phụ (Subtitle). Hãy gộp toàn bộ Sapo, Tít phụ và Nội dung bài viết vào chung mảng "content" theo đúng thứ tự đọc từ trên xuống dưới. Điều này rất quan trọng để tránh đảo lộn thứ tự.
-  6. LOẠI BỎ hoàn toàn: Chú thích ảnh (Caption), Header, Footer, Quảng cáo, Số trang. LƯU Ý: Tuyệt đối không loại bỏ tiêu đề bài báo (Headline) ngay cả khi nó nằm gần hoặc cùng vùng với Header/Footer.
+  6. GIỮ LẠI chú thích ảnh (Caption) và gán vào trường "imageCaption". LOẠI BỎ: Header, Footer, Quảng cáo, Số trang. LƯU Ý: Tuyệt đối không loại bỏ tiêu đề bài báo (Headline) ngay cả khi nó nằm gần hoặc cùng vùng với Header/Footer.
   7. Ghép các đoạn văn (Content) theo đúng thứ tự logic. Nếu một bài bị chia ra nhiều Zone trong cùng 1 trang, hãy ghép lại ngay.
   8. KHÔNG lặp lại Tiêu đề (Title) trong phần Nội dung (Content).
   
@@ -416,7 +416,8 @@ export async function extractArticlesHybrid(
                 type: Type.ARRAY,
                 items: { type: Type.STRING }
               },
-              seePage: { type: Type.STRING }
+              seePage: { type: Type.STRING },
+              imageCaption: { type: Type.STRING }
             },
             required: ["title", "content"]
           }
@@ -448,7 +449,7 @@ export async function extractArticlesHybrid(
               content: (Array.isArray(art.content) ? art.content : [])
                 .map((p: string) => p.trim())
                 .filter((p: string) => p.length > 0),
-              imageCaption: "",
+              imageCaption: art.imageCaption || "",
               seePage: art.seePage || "",
               pageNumbers: [pageNumber],
               fileName: fileName,

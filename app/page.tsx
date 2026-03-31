@@ -443,7 +443,7 @@ function NewspaperLayoutContent() {
     setSelectedFiles(newSelection);
   };
 
-  const processInParallel = async (indices: number[], concurrency: number = 3) => {
+  const processInParallel = async (indices: number[], concurrency: number = 2) => {
     const results: Article[] = [];
     const chunks = [];
     for (let i = 0; i < indices.length; i += concurrency) {
