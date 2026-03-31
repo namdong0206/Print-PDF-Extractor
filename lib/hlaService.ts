@@ -306,7 +306,8 @@ export class HLAService {
       } else {
         if (gapStart !== -1) {
           const gapWidth = i - gapStart;
-          if (gapWidth > (direction === 'V' ? 10 : 8)) { // Ngưỡng tối thiểu cho máng xối/khoảng cách bài
+          // Giảm ngưỡng để phát hiện các máng xối hẹp hơn giữa các cột
+          if (gapWidth > (direction === 'V' ? 6 : 8)) { 
             gaps.push({ start: gapStart + offset, width: gapWidth });
           }
           gapStart = -1;
@@ -364,7 +365,13 @@ export class HLAService {
         if (block.fontSize > this.baseFontSize + 4) {
           block.label = 'Headline';
         } else if (block.fontSize > this.baseFontSize + 1) {
-          block.label = 'Sapo';
+          // Chỉ gán nhãn Sapo nếu nó nằm gần một Headline trong cùng zone
+          const nearHeadline = zone.blocks.some(b => b.label === 'Headline' && Math.abs(b.bbox.y - block.bbox.y) < 100);
+          if (nearHeadline) {
+            block.label = 'Sapo';
+          } else {
+            block.label = 'Content';
+          }
         } else if (block.fontSize < this.baseFontSize - 1) {
           block.label = 'Caption';
         } else {

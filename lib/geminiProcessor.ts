@@ -327,8 +327,20 @@ export async function extractArticlesHybrid(
   
   const ai = new GoogleGenAI({ apiKey });
   
-  // Tối ưu hóa dữ liệu gửi đi: Chỉ gửi các zone có khả năng là bài báo
-  const optimizedZones = zones.map(zone => ({
+  // Làm sạch dữ liệu gửi đi: Loại bỏ header/footer của trang khác khỏi các block
+  const cleanedZones = zones.map(zone => {
+    return {
+      ...zone,
+      blocks: zone.blocks
+        .map(b => ({
+          ...b,
+          text: b.text.replace(/CHÍNH TRỊ\s+\d+\/\d+\/\d+\s+\d+/gi, '').trim()
+        }))
+        .filter(b => b.text.length > 0)
+    };
+  }).filter(zone => zone.blocks.length > 0);
+
+  const optimizedZones = cleanedZones.map(zone => ({
     id: zone.id,
     blocks: zone.blocks.map(b => ({
       t: b.text,
@@ -351,17 +363,18 @@ export async function extractArticlesHybrid(
   Nhiệm vụ: Đối chiếu hình ảnh với dữ liệu JSON để sắp xếp lại nội dung thành các bài báo hoàn chỉnh.
   
   QUY TẮC NGHIÊM NGẶT:
-  1. GIỮ NGUYÊN VĂN NỘI DUNG: Tuyệt đối giữ nguyên văn nội dung từ các block, KHÔNG được tóm tắt, KHÔNG viết lại, KHÔNG sửa đổi bất kỳ từ ngữ nào. Nhiệm vụ duy nhất là sắp xếp các đoạn văn theo đúng thứ tự đọc logic.
-  2. NHẬN DIỆN BÀI NỐI TRANG: 
+  1. CHỈ XỬ LÝ NỘI DUNG TRANG HIỆN TẠI: Tuyệt đối không xử lý nội dung thuộc về các trang khác (ví dụ: Header, Footer, Tiêu đề bài báo của trang sau). Nếu thấy nội dung này, hãy bỏ qua hoàn toàn.
+  2. GIỮ NGUYÊN VĂN NỘI DUNG: Tuyệt đối giữ nguyên văn nội dung từ các block, KHÔNG được tóm tắt, KHÔNG viết lại, KHÔNG sửa đổi bất kỳ từ ngữ nào. Nhiệm vụ duy nhất là sắp xếp các đoạn văn theo đúng thứ tự đọc logic.
+  3. NHẬN DIỆN BÀI NỐI TRANG: 
      - Tìm các chỉ dẫn "XEM TRANG ..." hoặc "Xem tiếp trang ..." ở cuối bài báo (thường là phần đầu của bài).
      - Tìm các chỉ dẫn "Tiếp theo trang ..." hoặc "Tiếp từ trang ..." ở đầu bài báo (thường là phần tiếp theo ở trang khác).
      - Lưu các chỉ dẫn này vào trường "seePage".
      - TUYỆT ĐỐI KHÔNG bao gồm các chỉ dẫn này trong mảng "content".
-  3. TIÊU ĐỀ BÀI NỐI: Tiêu đề ở các trang khác nhau của cùng một bài báo sẽ rất giống nhau (ít nhất 80% phần đầu). Hãy giữ nguyên tiêu đề gốc để hệ thống có thể ghép lại. Nếu bài báo là phần tiếp theo từ trang trước, hãy trích xuất chính xác tiêu đề của bài báo đó (thường được in đậm hoặc in hoa nhỏ ở đầu phần tiếp theo) để làm "title".
-  4. GỘP SAPO VÀ TÍT PHỤ VÀO CONTENT: KHÔNG tách riêng Sapo (Lead) hay Tít phụ (Subtitle). Hãy gộp toàn bộ Sapo, Tít phụ và Nội dung bài viết vào chung mảng "content" theo đúng thứ tự đọc từ trên xuống dưới. Điều này rất quan trọng để tránh đảo lộn thứ tự.
-  5. LOẠI BỎ hoàn toàn: Chú thích ảnh (Caption), Header, Footer, Quảng cáo, Số trang.
-  6. Ghép các đoạn văn (Content) theo đúng thứ tự logic. Nếu một bài bị chia ra nhiều Zone trong cùng 1 trang, hãy ghép lại ngay.
-  7. KHÔNG lặp lại Tiêu đề (Title) trong phần Nội dung (Content).
+  4. TIÊU ĐỀ BÀI NỐI: Tiêu đề ở các trang khác nhau của cùng một bài báo sẽ rất giống nhau (ít nhất 80% phần đầu). Hãy giữ nguyên tiêu đề gốc để hệ thống có thể ghép lại. Nếu bài báo là phần tiếp theo từ trang trước, hãy trích xuất chính xác tiêu đề của bài báo đó (thường được in đậm hoặc in hoa nhỏ ở đầu phần tiếp theo) để làm "title".
+  5. GỘP SAPO VÀ TÍT PHỤ VÀO CONTENT: KHÔNG tách riêng Sapo (Lead) hay Tít phụ (Subtitle). Hãy gộp toàn bộ Sapo, Tít phụ và Nội dung bài viết vào chung mảng "content" theo đúng thứ tự đọc từ trên xuống dưới. Điều này rất quan trọng để tránh đảo lộn thứ tự.
+  6. LOẠI BỎ hoàn toàn: Chú thích ảnh (Caption), Header, Footer, Quảng cáo, Số trang. LƯU Ý: Tuyệt đối không loại bỏ tiêu đề bài báo (Headline) ngay cả khi nó nằm gần hoặc cùng vùng với Header/Footer.
+  7. Ghép các đoạn văn (Content) theo đúng thứ tự logic. Nếu một bài bị chia ra nhiều Zone trong cùng 1 trang, hãy ghép lại ngay.
+  8. KHÔNG lặp lại Tiêu đề (Title) trong phần Nội dung (Content).
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
