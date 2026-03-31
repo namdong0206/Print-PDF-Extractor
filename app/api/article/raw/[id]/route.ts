@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
@@ -13,7 +12,7 @@ export async function GET(
     const docSnap = await getDoc(docRef);
 
     if (!docSnap.exists()) {
-      return new NextResponse('Bài báo không tồn tại', { status: 404 });
+      return new Response('Bài báo không tồn tại', { status: 404 });
     }
 
     const article = docSnap.data();
@@ -45,10 +44,10 @@ export async function GET(
       </html>
     `;
 
-    return new NextResponse(html, {
+    return new Response(html, {
       headers: { 'Content-Type': 'text/html' },
     });
   } catch (error) {
-    return new NextResponse('Lỗi hệ thống', { status: 500 });
+    return new Response('Lỗi hệ thống', { status: 500 });
   }
 }

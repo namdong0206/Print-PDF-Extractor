@@ -32,7 +32,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
           strategy="beforeInteractive"
         />
       </head>
-      <body suppressHydrationWarning className="antialiased">{children}</body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }
