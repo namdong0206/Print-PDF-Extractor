@@ -233,7 +233,13 @@ export async function extractArticlesHybrid(
   base64Image?: string
 ): Promise<Article[]> {
   console.log("--- [DEBUG] extractArticlesHybrid called ---");
-  const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY! });
+  
+  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("NEXT_PUBLIC_GEMINI_API_KEY is not set. Please configure it in your environment variables.");
+  }
+  
+  const ai = new GoogleGenAI({ apiKey });
   
   // Tối ưu hóa dữ liệu gửi đi: Chỉ gửi các zone có khả năng là bài báo
   const optimizedZones = zones.map(zone => ({
