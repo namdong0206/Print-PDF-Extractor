@@ -90,8 +90,8 @@ export const segmentRegions = (boxes: BoundingBox[]): Region[] => {
       const boxB = contentBoxes[j];
       
       // Check if close or overlapping
-      const xThreshold = 40; // Reduced from 60 to be more precise
-      const yThreshold = 20; // Reduced from 25 to be more precise
+      const xThreshold = 20; // Reduced from 40 to be more precise
+      const yThreshold = 10; // Reduced from 20 to be more precise
       
       const overlapX = Math.max(boxA.x, boxB.x) < Math.min(boxA.x + boxA.width, boxB.x + boxB.width) + xThreshold;
       const overlapY = Math.max(boxA.y, boxB.y) < Math.min(boxA.y + boxA.height, boxB.y + boxB.height) + yThreshold;

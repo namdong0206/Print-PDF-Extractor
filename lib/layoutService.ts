@@ -1,8 +1,11 @@
 import { extractVectorData } from './vectorService';
 import { BoundingBox, ArticleRegion } from './types';
 import { segmentRegions } from './segmentationService';
+import { HLAService, HLAZone } from './hlaService';
 
-function groupTextItems(items: any[], thresholdX = 8, thresholdY = 3) {
+const hlaService = new HLAService();
+
+function groupTextItems(items: any[], thresholdX = 15, thresholdY = 5) {
   if (items.length === 0) return [];
   
   // Sort items primarily by Y (top-down), then by X
@@ -15,8 +18,11 @@ function groupTextItems(items: any[], thresholdX = 8, thresholdY = 3) {
     const prev = sorted[i - 1];
     const curr = sorted[i];
     
+    // Ngưỡng khoảng cách ngang để coi là cùng một khối văn bản (khoảng 2 lần font size)
+    const horizontalGapThreshold = Math.max(prev.fontSize, curr.fontSize) * 2.0;
+    
     const sameLine = Math.abs(curr.y - prev.y) < thresholdY;
-    const closeX = curr.x - (prev.x + prev.width) < thresholdX;
+    const closeX = curr.x - (prev.x + prev.width) < horizontalGapThreshold;
     
     if (sameLine && closeX) {
       currentLine.push(curr);
@@ -606,6 +612,41 @@ async function processImageWithOpenCV(pageImage: string, pageWidth: number, page
     img.src = pageImage;
   });
 }
+
+export const parseNewspaperLayoutHybrid = async (page: any): Promise<{ zones: HLAZone[], pageWidth: number, pageHeight: number }> => {
+  try {
+    const viewport = page.getViewport({ scale: 1.0 });
+    const pageWidth = viewport.width;
+    const pageHeight = viewport.height;
+
+    // 1. Extract Vector Data
+    const vectorData = await extractVectorData(page);
+
+    // 2. Extract Text Content
+    const textContent = await page.getTextContent();
+    const textItems = textContent.items.map((item: any) => {
+      const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
+      return {
+        text: item.str,
+        x: item.transform[4],
+        y: pageHeight - item.transform[5] - fontSize,
+        width: item.width,
+        height: fontSize,
+        fontSize,
+        fontName: item.fontName,
+        isBold: item.fontName.toLowerCase().includes('bold') || item.fontName.toLowerCase().includes('heavy')
+      };
+    });
+
+    // 3. HLA Analysis
+    const zones = await hlaService.analyze(textItems, vectorData, pageWidth, pageHeight);
+
+    return { zones, pageWidth, pageHeight };
+  } catch (error) {
+    console.error("Hybrid Layout analysis failed:", error);
+    throw error;
+  }
+};
 
 export const parseNewspaperLayout = async (page: any, pageImage?: string): Promise<{ boxes: BoundingBox[], vectorData: any, maskImage?: string, cells: ArticleRegion[] }> => {
   try {

@@ -18,14 +18,16 @@ import {
   Copy,
   Loader2,
   AlertCircle,
-  Box
+  Box,
+  ExternalLink
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { parseNewspaperLayout } from '@/lib/layoutService';
+import { parseNewspaperLayout, parseNewspaperLayoutHybrid } from '@/lib/layoutService';
 import { ArticleRegion, BoundingBox } from '@/lib/types';
 import { segmentRegions, Region, groupBoxesByArticleRegion } from '@/lib/segmentationService';
-import { extractTextBlocksWithMetadata, extractArticlesMultimodal, TextBlock, Article, mergeArticles } from '@/lib/geminiProcessor';
+import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles } from '@/lib/geminiProcessor';
 import { processArticleContent } from '@/lib/textProcessor';
+import { HLAZone } from '@/lib/hlaService';
 
 // Dynamic imports for browser-only libraries
 // We'll load pdfjs inside the component to avoid global state issues
@@ -123,6 +125,7 @@ function NewspaperLayoutContent() {
   const [groupedBoxes, setGroupBoxedBoxes] = useState<Map<string, BoundingBox[]>>(new Map());
   const [selectedArticleRegion, setSelectedArticleRegion] = useState<ArticleRegion | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingFileIndex, setProcessingFileIndex] = useState<number | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
   const [boxes, setBoxes] = useState<BoundingBox[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
@@ -132,6 +135,7 @@ function NewspaperLayoutContent() {
   const [viewMode, setViewMode] = useState<'all' | 'boxes' | 'regions' | 'articles' | 'lines'>('all');
   const [filteredFile, setFilteredFile] = useState<File | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
+  const [hlaZones, setHlaZones] = useState<HLAZone[]>([]);
   
   const filteredArticles = useMemo(() => {
     if (!filteredFile) return articles;
@@ -167,6 +171,17 @@ function NewspaperLayoutContent() {
 
   useEffect(() => {
     setIsClient(true);
+    
+    // Load saved articles from localStorage
+    const saved = localStorage.getItem('extracted_articles');
+    if (saved) {
+      try {
+        setArticles(JSON.parse(saved));
+      } catch (e) {
+        console.error("Error parsing saved articles", e);
+      }
+    }
+
     // Load pdfjs only on client
     const loadPdfJs = async () => {
       try {
@@ -201,13 +216,37 @@ function NewspaperLayoutContent() {
     const uploadedFiles = event.target.files;
     if (!uploadedFiles || uploadedFiles.length === 0) return;
 
+    // Xóa toàn bộ dữ liệu phiên làm việc trước
+    localStorage.removeItem('extracted_articles');
     const newFiles = Array.from(uploadedFiles);
-    setFiles(prev => [...prev, ...newFiles]);
+    setFiles(newFiles);
+    setCurrentFileIndex(0);
+    setPdf(null);
+    setNumPages(0);
+    setCurrentPage(1);
+    setPageImage(null);
+    setMaskImage(null);
+    setArticleRegions([]);
+    setGroupBoxedBoxes(new Map());
+    setSelectedArticleRegion(null);
+    setProcessingFileIndex(null);
+    setBoxes([]);
+    setRegions([]);
+    setArticles([]);
+    setHlaZones([]);
+    setViewMode('all');
+    setSelectedArticle(null);
+    setSelectedBox(null);
+    setFilteredFile(null);
+    setSelectedFiles(new Set());
+    setProcessingTime(null);
+    setElapsedTime(0);
+    setPageSize({ width: 600, height: 800 });
+    setIsProcessing(false);
+    setIsExtracting(false);
     
-    if (currentFileIndex === -1) {
-      setCurrentFileIndex(0);
-      await loadFile(newFiles[0], true);
-    }
+    // Bắt đầu phiên làm việc mới với file đầu tiên
+    await loadFile(newFiles[0], true);
   };
 
   const loadFile = async (fileToLoad: File, clearArticles: boolean = true): Promise<{ pdfDoc: any, image: string | null } | null> => {
@@ -335,8 +374,11 @@ function NewspaperLayoutContent() {
     const startTime = Date.now();
     let allArticles: Article[] = [];
     
-    const indices = Array.from(selectedFiles);
+    const indices = Array.from(selectedFiles).sort((a, b) => 
+      files[a].name.localeCompare(files[b].name, undefined, { numeric: true, sensitivity: 'base' })
+    );
     for (const index of indices) {
+      setProcessingFileIndex(index);
       setCurrentFileIndex(index);
       const result = await loadFile(files[index], false);
       if (result) {
@@ -344,8 +386,10 @@ function NewspaperLayoutContent() {
         allArticles = [...allArticles, ...extracted];
       }
     }
+    setProcessingFileIndex(null);
     const merged = mergeArticles(allArticles);
     setArticles(merged);
+    localStorage.setItem('extracted_articles', JSON.stringify(merged));
     setProcessingTime((Date.now() - startTime) / 1000);
   };
 
@@ -354,113 +398,44 @@ function NewspaperLayoutContent() {
     setProcessingTime(null);
     const startTime = Date.now();
     let allArticles: Article[] = [];
-    for (let i = 0; i < files.length; i++) {
-      setCurrentFileIndex(i);
-      const result = await loadFile(files[i], false);
+    const sortedIndices = Array.from({ length: files.length }, (_, i) => i).sort((a, b) => 
+      files[a].name.localeCompare(files[b].name, undefined, { numeric: true, sensitivity: 'base' })
+    );
+
+    for (const index of sortedIndices) {
+      setProcessingFileIndex(index);
+      setCurrentFileIndex(index);
+      const result = await loadFile(files[index], false);
       if (result) {
-        const extracted = await handleExtractArticles(result.pdfDoc, result.image || '', 1, files[i].name);
+        const extracted = await handleExtractArticles(result.pdfDoc, result.image || '', 1, files[index].name);
         allArticles = [...allArticles, ...extracted];
       }
     }
+    setProcessingFileIndex(null);
     const merged = mergeArticles(allArticles);
     setArticles(merged);
+    localStorage.setItem('extracted_articles', JSON.stringify(merged));
     setProcessingTime((Date.now() - startTime) / 1000);
   };
 
   const handleExtractArticles = async (pdfDoc: any, image: string, pageNum: number, fileName: string): Promise<Article[]> => {
-    if (!pdfDoc || !image) return [];
+    if (!pdfDoc) return [];
 
     setIsProcessing(true);
     const startTime = Date.now();
     try {
       const page = await pdfDoc.getPage(pageNum);
       
-      // Tạo một bản render độ phân giải thấp (scale 1.0) dành riêng cho OpenCV
-      // Điều này giúp OpenCV xử lý nhanh hơn gấp nhiều lần so với scale 3.0
-      const viewport = page.getViewport({ scale: 1.0 });
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      // 1. Hybrid Layout Analysis (Heuristic)
+      console.time("HLATime");
+      const { zones } = await parseNewspaperLayoutHybrid(page);
+      console.timeEnd("HLATime");
       
-      let analysisImage = image; // Fallback
-      if (context) {
-        await page.render({ canvasContext: context, viewport }).promise;
-        analysisImage = canvas.toDataURL('image/png');
-      }
-
-      // Chạy song song các tác vụ
-      const [layoutResult, textBlocks] = await Promise.all([
-        parseNewspaperLayout(page, analysisImage),
-        extractTextBlocksWithMetadata(page)
-      ]);
+      setHlaZones(zones);
       
-      setBoxes(layoutResult.boxes);
-      setMaskImage(layoutResult.maskImage || null);
-      setArticleRegions(layoutResult.cells || []);
-      
-      if (layoutResult.cells) {
-        const grouped = groupBoxesByArticleRegion(layoutResult.boxes, layoutResult.cells);
-        setGroupBoxedBoxes(grouped);
-      }
-      
-      const regions = segmentRegions(layoutResult.boxes);
-      setRegions(regions);
-      
-      // Crop each ArticleRegion
-      const croppedImages: string[] = [];
-      const scaleFactor = 0.6; // Giảm độ phân giải xuống 60% để tối ưu dung lượng
-      
-      if (layoutResult.cells && layoutResult.cells.length > 0) {
-        const img = new Image();
-        img.src = analysisImage;
-        await new Promise((resolve) => {
-          img.onload = resolve;
-        });
-
-        for (const cell of layoutResult.cells) {
-          const cropCanvas = document.createElement('canvas');
-          cropCanvas.width = cell.bbox.width * scaleFactor;
-          cropCanvas.height = cell.bbox.height * scaleFactor;
-          const cropCtx = cropCanvas.getContext('2d');
-          if (cropCtx) {
-            // Fill background with white before drawing (for JPEG)
-            cropCtx.fillStyle = '#FFFFFF';
-            cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
-            
-            cropCtx.drawImage(
-              img,
-              cell.bbox.x,
-              cell.bbox.y,
-              cell.bbox.width,
-              cell.bbox.height,
-              0,
-              0,
-              cropCanvas.width,
-              cropCanvas.height
-            );
-            // Sử dụng JPEG với chất lượng 0.7 để giảm dung lượng file
-            croppedImages.push(cropCanvas.toDataURL('image/jpeg', 0.7));
-          }
-        }
-      } else {
-        // Fallback to full image if no regions found
-        const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = canvas.width * scaleFactor;
-        cropCanvas.height = canvas.height * scaleFactor;
-        const cropCtx = cropCanvas.getContext('2d');
-        if (cropCtx) {
-          cropCtx.fillStyle = '#FFFFFF';
-          cropCtx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
-          cropCtx.drawImage(canvas, 0, 0, cropCanvas.width, cropCanvas.height);
-          croppedImages.push(cropCanvas.toDataURL('image/jpeg', 0.7));
-        } else {
-          croppedImages.push(analysisImage);
-        }
-      }
-
-      // Call Gemini
-      const extractedArticles = await extractArticlesMultimodal(croppedImages, textBlocks, pageNum, fileName);
+      // 2. Semantic Extraction (Gemini 3 Flash - Multimodal)
+      setIsExtracting(true);
+      const extractedArticles = await extractArticlesHybrid(zones, pageNum, fileName, image);
       
       setIsExtracting(false);
       setViewMode('articles');
@@ -471,6 +446,7 @@ function NewspaperLayoutContent() {
       return [];
     } finally {
       setIsProcessing(false);
+      setIsExtracting(false);
     }
   };
 
@@ -539,14 +515,25 @@ function NewspaperLayoutContent() {
                   key={index}
                   onClick={() => toggleFileSelection(index)}
                   className={cn(
-                    "px-3 py-2 rounded-lg text-xs font-medium border text-left flex items-center justify-between",
-                    selectedFiles.has(index)
-                      ? "bg-orange-50 border-orange-300 text-orange-900" 
-                      : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
+                    "px-3 py-2 rounded-lg text-xs font-medium border text-left flex items-center justify-between transition-colors",
+                    processingFileIndex === index 
+                      ? "bg-orange-100 border-[#F27D26] text-[#F27D26]"
+                      : selectedFiles.has(index)
+                        ? "bg-orange-50 border-orange-300 text-orange-900" 
+                        : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
                   )}
                 >
-                  <span className="truncate">{f.name}</span>
-                  {selectedFiles.has(index) && <CheckCircle2 size={14} className="text-orange-600" />}
+                  <div className="flex flex-col truncate">
+                    <span className="truncate">{f.name}</span>
+                    {processingFileIndex === index && (
+                      <span className="text-[10px] font-bold animate-pulse">Đang xử lý...</span>
+                    )}
+                  </div>
+                  {processingFileIndex === index ? (
+                    <Loader2 size={14} className="animate-spin text-[#F27D26]" />
+                  ) : selectedFiles.has(index) ? (
+                    <CheckCircle2 size={14} className="text-orange-600" />
+                  ) : null}
                 </button>
               ))}
             </div>
@@ -606,7 +593,19 @@ function NewspaperLayoutContent() {
               <div className="space-y-6">
                 <div className="flex items-center justify-between gap-4">
                   <h1 className="text-3xl font-serif font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
-                  <CopyButton text={selectedArticle.title} label="Tiêu đề" />
+                  <div className="flex items-center gap-2">
+                    <a 
+                      href={`/article?id=${encodeURIComponent(selectedArticle.id)}`} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
+                      title="Mở trang riêng"
+                    >
+                      <ExternalLink size={18} />
+                      <span className="hidden md:inline">Xem trang riêng</span>
+                    </a>
+                    <CopyButton text={selectedArticle.title} label="Tiêu đề" />
+                  </div>
                 </div>
                 {selectedArticle.author && (
                   <div className="flex items-center justify-between gap-4">
@@ -657,62 +656,6 @@ function NewspaperLayoutContent() {
               </div>
             )}
           </div>
-          {/* <div className="h-1/3 bg-white rounded-2xl border border-gray-200 shadow-sm relative overflow-hidden flex items-center justify-center">
-            {pageImage ? (
-              <div className="relative w-full h-full p-4 flex items-center justify-center overflow-auto">
-                <div className="relative inline-block shadow-2xl">
-                  <NextImage 
-                    src={pageImage} 
-                    alt="Newspaper Page" 
-                    width={600}
-                    height={800}
-                    unoptimized
-                    className="max-w-full h-auto object-contain rounded-sm"
-                  />
-                </div>
-                {numPages > 1 && (
-                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur shadow-lg rounded-full px-4 py-2 flex items-center gap-4 border border-gray-200">
-                    <button 
-                      disabled={currentPage === 1}
-                      onClick={() => {
-                        const next = currentPage - 1;
-                        setCurrentPage(next);
-                        renderPage(pdf, next);
-                      }}
-                      className="p-1 hover:bg-gray-100 rounded-full disabled:opacity-30"
-                    >
-                      <ChevronLeft size={20} />
-                    </button>
-                    <span className="text-sm font-medium">Trang {currentPage} / {numPages}</span>
-                    <button 
-                      disabled={currentPage === numPages}
-                      onClick={() => {
-                        const next = currentPage + 1;
-                        setCurrentPage(next);
-                        renderPage(pdf, next);
-                      }}
-                      className="p-1 hover:bg-gray-100 rounded-full disabled:opacity-30"
-                    >
-                      <ChevronRight size={20} />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-4 text-gray-400">
-                <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center border-2 border-dashed border-gray-200">
-                  <FileText size={32} />
-                </div>
-                <p className="text-sm">Tải lên file PDF hoặc ảnh để bắt đầu</p>
-              </div>
-            )}
-            {isProcessing && (
-              <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] flex flex-col items-center justify-center z-10">
-                <Loader2 className="animate-spin text-[#F27D26] mb-4" size={40} />
-                <p className="text-sm font-medium text-gray-600">Đang xử lý dữ liệu...</p>
-              </div>
-            )}
-          </div> */}
         </div>
       </main>
     </div>

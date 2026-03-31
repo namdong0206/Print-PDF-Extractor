@@ -1,4 +1,5 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
+import { HLAZone } from "./hlaService";
 
 // Interface cho TextBlock (tối ưu hóa tên trường để giảm dung lượng JSON)
 export interface TextBlock {
@@ -8,6 +9,8 @@ export interface TextBlock {
   b: boolean; // is_bold
   x: number;
   y: number;
+  l?: string; // label (from HLA)
+  ind?: boolean; // is_indented
 }
 
 export interface Article {
@@ -26,22 +29,102 @@ export interface Article {
 export function mergeArticles(articles: Article[]): Article[] {
   const merged: Article[] = [];
   
+  const normalize = (s: string) => s.toLowerCase()
+    .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Hàm kiểm tra độ tương đồng phần đầu (ít nhất 80%)
+  const isSimilarTitle = (t1: string, t2: string) => {
+    const s1 = normalize(t1);
+    const s2 = normalize(t2);
+    if (s1 === s2) return true;
+    
+    const minLen = Math.min(s1.length, s2.length);
+    if (minLen < 10) return s1 === s2; // Tiêu đề quá ngắn thì yêu cầu khớp chính xác
+
+    // Kiểm tra xem phần chung ở đầu có chiếm ít nhất 80% chiều dài của tiêu đề ngắn hơn không
+    let commonPrefixLen = 0;
+    for (let i = 0; i < minLen; i++) {
+      if (s1[i] === s2[i]) commonPrefixLen++;
+      else break;
+    }
+    
+    return (commonPrefixLen / minLen) >= 0.8;
+  };
+
+  const cleanContent = (content: string[]) => {
+    const cues = [
+      /^\(xem trang.*\)$/i,
+      /^\(xem tiếp trang.*\)$/i,
+      /^\(tiếp theo trang.*\)$/i,
+      /^\(tiếp từ trang.*\)$/i,
+      /\(xem trang \d+\)/i,
+      /\(tiếp theo trang \d+\)/i,
+      /\(xem tiếp trang \d+\)/i,
+      /xem trang \d+/i,
+      /tiếp theo trang \d+/i,
+      /xem tiếp trang \d+/i
+    ];
+    return content.filter(para => {
+      const trimmed = para.trim();
+      return !cues.some(regex => regex.test(trimmed));
+    }).map(para => {
+      // Also remove cues if they are at the end of a paragraph
+      let cleaned = para;
+      cues.forEach(regex => {
+        cleaned = cleaned.replace(regex, "").trim();
+      });
+      return cleaned;
+    }).filter(p => p.length > 0);
+  };
+
   for (const article of articles) {
-    const existingIndex = merged.findIndex(a => 
-      a.title.toLowerCase().trim() === article.title.toLowerCase().trim()
-    );
+    const existingIndex = merged.findIndex(a => isSimilarTitle(a.title, article.title));
     
     if (existingIndex !== -1) {
-      // Merge
       const existing = merged[existingIndex];
-      existing.content = [...existing.content, ...article.content];
-      existing.pageNumbers = [...new Set([...existing.pageNumbers, ...article.pageNumbers])];
-      // Keep the first lead/author/caption if not present in existing
+      
+      // Ghép nội dung, tránh lặp lại đoạn văn nếu AI trích xuất trùng
+      const newContent = article.content.filter(p => !existing.content.includes(p));
+      
+      // Xác định thứ tự ghép dựa trên semantic cues hoặc số trang
+      const isArticleContinuation = /tiếp theo trang|tiếp từ trang/i.test(article.seePage || "");
+      const isArticleStart = /xem trang|xem tiếp trang/i.test(article.seePage || "");
+      
+      const isExistingContinuation = /tiếp theo trang|tiếp từ trang/i.test(existing.seePage || "");
+      const isExistingStart = /xem trang|xem tiếp trang/i.test(existing.seePage || "");
+
+      let append = true;
+      
+      if (isArticleContinuation && isExistingStart) {
+        // Article là phần tiếp theo, Existing là phần đầu -> Append
+        append = true;
+      } else if (isArticleStart && isExistingContinuation) {
+        // Article là phần đầu, Existing là phần tiếp theo -> Prepend
+        append = false;
+      } else {
+        // Fallback to page number nếu không có cue rõ ràng
+        append = article.pageNumbers[0] > existing.pageNumbers[existing.pageNumbers.length - 1];
+      }
+
+      if (append) {
+        existing.content = cleanContent([...existing.content, ...newContent]);
+        if (article.seePage) existing.seePage = article.seePage;
+      } else {
+        existing.content = cleanContent([...newContent, ...existing.content]);
+        // Giữ nguyên seePage của existing nếu nó là phần cuối
+      }
+      
+      existing.pageNumbers = [...new Set([...existing.pageNumbers, ...article.pageNumbers])].sort((a, b) => a - b);
+      
       if (!existing.lead && article.lead) existing.lead = article.lead;
       if (!existing.author && article.author) existing.author = article.author;
       if (!existing.imageCaption && article.imageCaption) existing.imageCaption = article.imageCaption;
     } else {
-      merged.push(article);
+      const newArt = { ...article };
+      newArt.content = cleanContent(newArt.content);
+      merged.push(newArt);
     }
   }
   return merged;
@@ -140,187 +223,125 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
   }
 }
 
-export interface ArticleStructure {
-  title_id: number;
-  author_ids: string; // Comma separated IDs
-  sapo_ids: string; // Comma separated IDs
-  body_ids: string; // Comma separated IDs
-}
-
 /**
- * Bước 2 & 3: Gọi API Gemini để xử lý bài báo (Multimodal: Ảnh + Text)
+ * Bước 2 & 3: Gọi API Gemini để xử lý bài báo (Hybrid: HLA Zones + Text)
  */
-export async function extractArticlesMultimodal(
-  regionImages: string[],
-  textBlocks: TextBlock[],
+export async function extractArticlesHybrid(
+  zones: HLAZone[],
   pageNumber: number,
-  fileName: string
+  fileName: string,
+  base64Image?: string
 ): Promise<Article[]> {
-  console.log("--- [DEBUG] extractArticlesMultimodal called ---");
+  console.log("--- [DEBUG] extractArticlesHybrid called ---");
   const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY! });
   
-  // Tối ưu hóa dữ liệu gửi đi
-  const optimizedForGemini = textBlocks.map(b => ({
-    id: b.id,
-    t: b.t,
-    fs: b.fs,
-    b: b.b,
-    x: Math.round(b.x),
-    y: Math.round(b.y)
+  // Tối ưu hóa dữ liệu gửi đi: Chỉ gửi các zone có khả năng là bài báo
+  const optimizedZones = zones.map(zone => ({
+    id: zone.id,
+    blocks: zone.blocks.map(b => ({
+      t: b.text,
+      fs: b.fontSize,
+      b: b.isBold,
+      l: b.label,
+      ind: b.isIndented
+    }))
   }));
 
-  const jsonPayload = JSON.stringify(optimizedForGemini);
-  console.log(`Kích thước gửi: ${(new Blob([jsonPayload]).size / 1024).toFixed(2)} KB (Blocks: ${textBlocks.length})`);
+  const jsonPayload = JSON.stringify(optimizedZones);
+  console.log(`Kích thước gửi: ${(new Blob([jsonPayload]).size / 1024).toFixed(2)} KB (Zones: ${zones.length})`);
 
   const prompt = `
-  Bạn là chuyên gia phân tích cấu trúc báo chí. 
-  Đầu vào là các ảnh cắt của từng vùng bài báo (Article Region) và danh sách các đoạn văn (TextBlock) được trích xuất từ file PDF.
-  Nhiệm vụ: Sắp xếp lại cho chuẩn các bài báo và trả về dữ liệu JSON theo từng bài.
+  Bạn là chuyên gia biên tập báo chí chuyên nghiệp. 
+  Đầu vào là:
+  1. Hình ảnh trang báo (để bạn thấy luồng đọc, đường kẻ, ảnh).
+  2. Danh sách các vùng bài báo (Zones) đã được phân tách sơ bộ dưới dạng JSON.
+
+  Nhiệm vụ: Đối chiếu hình ảnh với dữ liệu JSON để sắp xếp lại nội dung thành các bài báo hoàn chỉnh.
   
-  YÊU CẦU QUAN TRỌNG:
-  1. Trả về mảng JSON chứa các bài báo.
-  2. Mỗi bài báo phải có ĐẦY ĐỦ các phần tử: Tiêu đề, Tác giả, Sapo, Nội dung, Chú thích ảnh, Xem trang/Tiếp theo trang.
-  3. BẢO ĐẢM NỘI DUNG GIỮ NGUYÊN VĂN từ các TextBlock, KHÔNG thêm bớt, KHÔNG thay đổi từ ngữ.
-  4. Với những bài bị phân chia nhầm (ví dụ 1 bài bị tách thành 2 vùng), hãy tự động nhận diện và ghép lại cho chuẩn thành 1 bài hoàn chỉnh.
-  5. Nội dung (content) phải là một mảng các chuỗi, mỗi chuỗi tương ứng với một đoạn văn.
-
-  CẤU TRÚC JSON TRẢ VỀ CHO MỖI BÀI BÁO:
-  - title: Tiêu đề bài báo (string)
-  - author: Tác giả (string)
-  - lead: Sapo / Lead (string)
-  - content: Nội dung bài báo (array of strings)
-  - imageCaption: Chú thích ảnh (string)
-  - seePage: Xem trang / Tiếp theo trang (string)
-
-  DANH SÁCH TEXT BLOCKS:
+  QUY TẮC NGHIÊM NGẶT:
+  1. GIỮ NGUYÊN VĂN NỘI DUNG: Tuyệt đối giữ nguyên văn nội dung từ các block, KHÔNG được tóm tắt, KHÔNG viết lại, KHÔNG sửa đổi bất kỳ từ ngữ nào. Nhiệm vụ duy nhất là sắp xếp các đoạn văn theo đúng thứ tự đọc logic.
+  2. NHẬN DIỆN BÀI NỐI TRANG: 
+     - Tìm các chỉ dẫn "XEM TRANG ..." hoặc "Xem tiếp trang ..." ở cuối bài báo (thường là phần đầu của bài).
+     - Tìm các chỉ dẫn "Tiếp theo trang ..." hoặc "Tiếp từ trang ..." ở đầu bài báo (thường là phần tiếp theo ở trang khác).
+     - Lưu các chỉ dẫn này vào trường "seePage".
+     - TUYỆT ĐỐI KHÔNG bao gồm các chỉ dẫn này trong mảng "content".
+  3. TIÊU ĐỀ BÀI NỐI: Tiêu đề ở các trang khác nhau của cùng một bài báo sẽ rất giống nhau (ít nhất 80% phần đầu). Hãy giữ nguyên tiêu đề gốc để hệ thống có thể ghép lại.
+  4. LOẠI BỎ hoàn toàn: Chú thích ảnh (Caption), Header, Footer, Quảng cáo, Số trang.
+  5. Ghép các đoạn văn (Content) theo đúng thứ tự logic. Nếu một bài bị chia ra nhiều Zone trong cùng 1 trang, hãy ghép lại ngay.
+  6. KHÔNG lặp lại Tiêu đề (Title) trong phần Nội dung (Content).
+  
+  DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
   `;
 
-  const imageParts = regionImages.map(img => ({
-    inlineData: {
-      mimeType: "image/jpeg",
-      data: img.includes(",") ? img.split(",")[1] : img,
-    },
-  }));
-
-  const textPart = {
-    text: prompt,
-  };
-
   console.time("GeminiAPITime");
   
-  const FALLBACK_MODELS = [
-    "gemini-3.1-pro-preview",
-    "gemini-2.5-pro",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-8b"
-  ];
+  const MODEL = "gemini-3-flash-preview";
 
-  let response;
-  let currentModelIndex = 0;
-  let retries = 0;
-  const maxRetriesPerModel = 2; // Retry a couple of times before switching
-  let delay = 2000; // Start with 2 seconds
-
-  while (currentModelIndex < FALLBACK_MODELS.length) {
-    const currentModel = FALLBACK_MODELS[currentModelIndex];
-    try {
-      response = await ai.models.generateContent({
-        model: currentModel,
-        contents: { parts: [...imageParts, textPart] },
-        config: {
-          temperature: 0.1,
-          responseMimeType: "application/json",
-          maxOutputTokens: 16384,
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                author: { type: Type.STRING },
-                lead: { type: Type.STRING },
-                content: { 
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING }
-                },
-                imageCaption: { type: Type.STRING },
-                seePage: { type: Type.STRING }
-              },
-              required: ["title", "content"]
-            }
-          },
-        },
+  try {
+    const contents: any[] = [];
+    if (base64Image) {
+      const base64Data = base64Image.split(',')[1] || base64Image;
+      contents.push({
+        parts: [
+          { inlineData: { data: base64Data, mimeType: "image/png" } },
+          { text: prompt }
+        ]
       });
-      break; // Success, exit retry loop
-    } catch (error: any) {
-      const isRateLimit = error?.status === 429 || 
-                          error?.status === "RESOURCE_EXHAUSTED" || 
-                          error?.message?.includes("429") || 
-                          error?.message?.includes("quota") ||
-                          error?.message?.includes("RESOURCE_EXHAUSTED");
-      
-      const isNotFound = error?.status === 404 || 
-                         error?.message?.includes("not found") || 
-                         error?.message?.includes("is not supported");
-
-      if (isRateLimit) {
-        if (retries < maxRetriesPerModel) {
-          console.warn(`[${currentModel}] Rate limit hit. Retrying in ${delay}ms... (Attempt ${retries + 1} of ${maxRetriesPerModel})`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          retries++;
-          delay *= 2; // Exponential backoff
-        } else {
-          console.warn(`[${currentModel}] Quota exceeded. Switching to next fallback model...`);
-          currentModelIndex++;
-          retries = 0;
-          delay = 2000;
-        }
-      } else if (isNotFound) {
-        console.warn(`[${currentModel}] Model not found. Switching to next fallback model...`);
-        currentModelIndex++;
-        retries = 0;
-        delay = 2000;
-      } else {
-        console.timeEnd("GeminiAPITime");
-        console.error(`Error processing articles with Gemini [${currentModel}]:`, error);
-        throw error;
-      }
+    } else {
+      contents.push({ parts: [{ text: prompt }] });
     }
+
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: contents,
+      config: {
+        temperature: 0,
+        responseMimeType: "application/json",
+        thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              author: { type: Type.STRING },
+              lead: { type: Type.STRING },
+              content: { 
+                type: Type.ARRAY,
+                items: { type: Type.STRING }
+              },
+              seePage: { type: Type.STRING }
+            },
+            required: ["title", "content"]
+          }
+        },
+      },
+    });
+
+    console.timeEnd("GeminiAPITime");
+
+    if (!response || !response.text) throw new Error("No response from Gemini");
+
+    const responseText = response.text.trim();
+    const rawResult = JSON.parse(responseText);
+    
+    return rawResult.map((art: any, index: number) => ({
+      id: `${fileName}-${pageNumber}-${index}-${Date.now()}`,
+      title: art.title || "Không có tiêu đề",
+      author: art.author || "",
+      lead: art.lead || "",
+      content: (Array.isArray(art.content) ? art.content : [])
+        .map((p: string) => p.trim())
+        .filter((p: string) => p.length > 0),
+      imageCaption: "", // Đã lọc bỏ ở prompt
+      seePage: art.seePage || "",
+      pageNumbers: [pageNumber],
+      fileName: fileName
+    }));
+  } catch (error) {
+    console.timeEnd("GeminiAPITime");
+    console.error("Error in extractArticlesHybrid:", error);
+    throw error;
   }
-
-  console.timeEnd("GeminiAPITime");
-
-  if (!response || !response.text) throw new Error("All fallback models failed or no response from Gemini");
-
-  const responseText = response.text.trim();
-    console.log(`Kích thước nhận: ${(new Blob([responseText]).size / 1024).toFixed(2)} KB`);
-
-    try {
-      let cleanedJson = responseText;
-      if (cleanedJson.startsWith("```json")) {
-        cleanedJson = cleanedJson.replace(/^```json\s*/, "").replace(/\s*```$/, "");
-      } else if (cleanedJson.startsWith("```")) {
-        cleanedJson = cleanedJson.replace(/^```\s*/, "").replace(/\s*```$/, "");
-      }
-      
-      const rawResult = JSON.parse(cleanedJson);
-      
-      return rawResult.map((art: any) => ({
-        title: art.title || "Không có tiêu đề",
-        author: art.author || "",
-        lead: art.lead || "",
-        content: (Array.isArray(art.content) ? art.content : [])
-          .map((p: string) => p.replace(/\((Tiếp theo trang|XEM TRANG).*?\)/gi, '').trim())
-          .filter((p: string) => p.length > 0 && (!art.imageCaption || !p.startsWith(art.imageCaption))),
-        imageCaption: art.imageCaption || "",
-        seePage: "", // Ignore seePage
-        pageNumbers: [pageNumber],
-        fileName: fileName
-      }));
-    } catch (parseError) {
-      console.error("JSON Parse Error. Raw response snippet:", responseText.substring(0, 300) + "..." + responseText.substring(responseText.length - 300));
-      throw new Error(`Failed to parse Gemini response: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
-    }
 }
