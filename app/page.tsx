@@ -1,8 +1,59 @@
 'use client';
 
 import { doc, setDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db, auth } from '@/lib/firebase';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 import NextImage from 'next/image';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -21,7 +72,9 @@ import {
   Loader2,
   AlertCircle,
   Box,
-  ExternalLink
+  ExternalLink,
+  Download,
+  FileDown
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { parseNewspaperLayout, parseNewspaperLayoutHybrid } from '@/lib/layoutService';
@@ -30,6 +83,7 @@ import { segmentRegions, Region, groupBoxesByArticleRegion } from '@/lib/segment
 import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles } from '@/lib/geminiProcessor';
 import { processArticleContent } from '@/lib/textProcessor';
 import { HLAZone } from '@/lib/hlaService';
+import { exportArticleToWord, exportAllArticlesToZip } from '@/lib/wordExport';
 
 // Dynamic imports for browser-only libraries
 // We'll load pdfjs inside the component to avoid global state issues
@@ -127,7 +181,7 @@ function NewspaperLayoutContent() {
   const [groupedBoxes, setGroupBoxedBoxes] = useState<Map<string, BoundingBox[]>>(new Map());
   const [selectedArticleRegion, setSelectedArticleRegion] = useState<ArticleRegion | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processingFileIndex, setProcessingFileIndex] = useState<number | null>(null);
+  const [processingFileIndices, setProcessingFileIndices] = useState<Set<number>>(new Set());
   const [isExtracting, setIsExtracting] = useState(false);
   const [boxes, setBoxes] = useState<BoundingBox[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
@@ -231,7 +285,7 @@ function NewspaperLayoutContent() {
     setArticleRegions([]);
     setGroupBoxedBoxes(new Map());
     setSelectedArticleRegion(null);
-    setProcessingFileIndex(null);
+    setProcessingFileIndices(new Set());
     setBoxes([]);
     setRegions([]);
     setArticles([]);
@@ -384,7 +438,7 @@ function NewspaperLayoutContent() {
 
     for (const chunk of chunks) {
       const chunkResults = await Promise.all(chunk.map(async (index) => {
-        setProcessingFileIndex(index);
+        setProcessingFileIndices(prev => new Set(prev).add(index));
         const file = files[index];
         
         // Render page for this specific file
@@ -420,7 +474,11 @@ function NewspaperLayoutContent() {
           console.error(`Error processing file ${file.name}:`, error);
           return [];
         } finally {
-          setProcessingFileIndex(null);
+          setProcessingFileIndices(prev => {
+            const next = new Set(prev);
+            next.delete(index);
+            return next;
+          });
         }
       }));
       
@@ -434,54 +492,76 @@ function NewspaperLayoutContent() {
     
     setArticles([]);
     setProcessingTime(null);
+    setIsProcessing(true);
+    setIsExtracting(true);
     const startTime = Date.now();
     
-    const indices = Array.from(selectedFiles).sort((a, b) => 
-      files[a].name.localeCompare(files[b].name, undefined, { numeric: true, sensitivity: 'base' })
-    );
+    try {
+      const indices = Array.from(selectedFiles).sort((a, b) => 
+        files[a].name.localeCompare(files[b].name, undefined, { numeric: true, sensitivity: 'base' })
+      );
 
-    const allArticles = await processInParallel(indices);
-    
-    const merged = mergeArticles(allArticles);
-    setArticles(merged);
-    localStorage.setItem('extracted_articles', JSON.stringify(merged));
-    
-    // Save to Firestore
-    for (const article of merged) {
-      await setDoc(doc(db, 'articles', article.id), article);
+      const allArticles = await processInParallel(indices);
+      
+      const merged = mergeArticles(allArticles);
+      setArticles(merged);
+      localStorage.setItem('extracted_articles', JSON.stringify(merged));
+      
+      // Save to Firestore
+      for (const article of merged) {
+        try {
+          await setDoc(doc(db, 'articles', article.id), article);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, `articles/${article.id}`);
+        }
+      }
+      
+      setViewMode('articles');
+      setProcessingTime((Date.now() - startTime) / 1000);
+    } finally {
+      setIsProcessing(false);
+      setIsExtracting(false);
     }
-    
-    setProcessingTime((Date.now() - startTime) / 1000);
   };
 
   const handleExtractAll = async () => {
     setArticles([]);
     setProcessingTime(null);
+    setIsProcessing(true);
+    setIsExtracting(true);
     const startTime = Date.now();
     
-    const sortedIndices = Array.from({ length: files.length }, (_, i) => i).sort((a, b) => 
-      files[a].name.localeCompare(files[b].name, undefined, { numeric: true, sensitivity: 'base' })
-    );
+    try {
+      const sortedIndices = Array.from({ length: files.length }, (_, i) => i).sort((a, b) => 
+        files[a].name.localeCompare(files[b].name, undefined, { numeric: true, sensitivity: 'base' })
+      );
 
-    const allArticles = await processInParallel(sortedIndices);
-    
-    const merged = mergeArticles(allArticles);
-    setArticles(merged);
-    localStorage.setItem('extracted_articles', JSON.stringify(merged));
-    
-    // Save to Firestore
-    for (const article of merged) {
-      await setDoc(doc(db, 'articles', article.id), article);
+      const allArticles = await processInParallel(sortedIndices);
+      
+      const merged = mergeArticles(allArticles);
+      setArticles(merged);
+      localStorage.setItem('extracted_articles', JSON.stringify(merged));
+      
+      // Save to Firestore
+      for (const article of merged) {
+        try {
+          await setDoc(doc(db, 'articles', article.id), article);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.WRITE, `articles/${article.id}`);
+        }
+      }
+      
+      setViewMode('articles');
+      setProcessingTime((Date.now() - startTime) / 1000);
+    } finally {
+      setIsProcessing(false);
+      setIsExtracting(false);
     }
-    
-    setProcessingTime((Date.now() - startTime) / 1000);
   };
 
   const handleExtractArticles = async (pdfDoc: any, image: string, pageNum: number, fileName: string): Promise<Article[]> => {
     if (!pdfDoc) return [];
 
-    setIsProcessing(true);
-    const startTime = Date.now();
     try {
       const page = await pdfDoc.getPage(pageNum);
       
@@ -493,19 +573,12 @@ function NewspaperLayoutContent() {
       setHlaZones(zones);
       
       // 2. Semantic Extraction (Gemini 3 Flash - Multimodal)
-      setIsExtracting(true);
       const extractedArticles = await extractArticlesHybrid(zones, pageNum, fileName, image);
       
-      setIsExtracting(false);
-      setViewMode('articles');
-      setProcessingTime((Date.now() - startTime) / 1000);
       return extractedArticles;
     } catch (error) {
       console.error("Error extracting articles:", error);
       return [];
-    } finally {
-      setIsProcessing(false);
-      setIsExtracting(false);
     }
   };
 
@@ -575,7 +648,7 @@ function NewspaperLayoutContent() {
                   onClick={() => toggleFileSelection(index)}
                   className={cn(
                     "px-3 py-2 rounded-lg text-xs font-medium border text-left flex items-center justify-between transition-colors",
-                    processingFileIndex === index 
+                    processingFileIndices.has(index) 
                       ? "bg-orange-100 border-[#F27D26] text-[#F27D26]"
                       : selectedFiles.has(index)
                         ? "bg-orange-50 border-orange-300 text-orange-900" 
@@ -584,11 +657,11 @@ function NewspaperLayoutContent() {
                 >
                   <div className="flex flex-col truncate">
                     <span className="truncate">{f.name}</span>
-                    {processingFileIndex === index && (
+                    {processingFileIndices.has(index) && (
                       <span className="text-[10px] font-bold animate-pulse">Đang xử lý...</span>
                     )}
                   </div>
-                  {processingFileIndex === index ? (
+                  {processingFileIndices.has(index) ? (
                     <Loader2 size={14} className="animate-spin text-[#F27D26]" />
                   ) : selectedFiles.has(index) ? (
                     <CheckCircle2 size={14} className="text-orange-600" />
@@ -614,8 +687,18 @@ function NewspaperLayoutContent() {
             Trích xuất tất cả
           </button>
           <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
-            <div className="p-4 border-b border-gray-100">
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between">
               <h2 className="font-serif font-bold text-lg">Bài báo đã trích xuất</h2>
+              {filteredArticles.length > 0 && (
+                <button
+                  onClick={() => exportAllArticlesToZip(filteredArticles)}
+                  className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
+                  title="Xuất tất cả ra file nén (.zip)"
+                >
+                  <Download size={18} />
+                  <span className="hidden md:inline">Xuất tất cả</span>
+                </button>
+              )}
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-2" ref={articleListRef}>
               {filteredArticles.length > 0 ? (
@@ -653,6 +736,14 @@ function NewspaperLayoutContent() {
                 <div className="flex items-center justify-between gap-4">
                   <h1 className="text-3xl font-serif font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => exportArticleToWord(selectedArticle)}
+                      className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
+                      title="Xuất file Word (.docx)"
+                    >
+                      <FileDown size={18} />
+                      <span className="hidden md:inline">Xuất file Word</span>
+                    </button>
                     <a 
                       href={`/api/article/raw/${selectedArticle.id}`} 
                       target="_blank" 

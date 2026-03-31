@@ -8,8 +8,8 @@ service cloud.firestore {
 
     // Collection: articles
     match /articles/{articleId} {
-      allow read: if true; // Publicly readable as requested for raw HTML view
-      allow write: if isAuthenticated(); // Only authenticated users can write
+      allow read: if true; 
+      allow write: if true; 
     }
   }
 }

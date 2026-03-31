@@ -3,8 +3,9 @@
 import React, { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Article } from '@/lib/geminiProcessor';
-import { Layout, FileText, ChevronLeft, Copy, Check } from 'lucide-react';
+import { Layout, FileText, ChevronLeft, Copy, Check, FileDown } from 'lucide-react';
 import Link from 'next/link';
+import { exportArticleToWord } from '@/lib/wordExport';
 
 function ArticleContent() {
   const searchParams = useSearchParams();
@@ -97,6 +98,10 @@ function ArticleContent() {
           <div className="flex items-center justify-between gap-4 text-sm bg-gray-50 p-3 rounded-lg border border-gray-100">
             <span className="text-gray-600 truncate font-mono">{currentUrl}</span>
             <div className="flex items-center gap-4">
+              <button onClick={() => exportArticleToWord(article)} className="flex items-center gap-1 text-[#F27D26] hover:text-[#d66d1f] font-bold">
+                <FileDown size={16} />
+                Xuất file Word
+              </button>
               <a href={`/api/article/raw/${article.id}`} target="_blank" rel="noopener noreferrer" className="text-[#F27D26] hover:text-[#d66d1f] font-bold">
                 Xem trang riêng
               </a>
