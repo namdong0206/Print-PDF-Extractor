@@ -303,13 +303,7 @@ function NewspaperLayoutContent() {
       const viewport = page.getViewport({ scale: 1.0 });
       setPageSize({ width: viewport.width, height: viewport.height });
 
-      // Optimization: Downscale if image is too large
-      const MAX_WIDTH = 1600;
-      let scale = 2.0; // Default high quality
-      if (viewport.width * scale > MAX_WIDTH) {
-        scale = MAX_WIDTH / viewport.width;
-      }
-      
+      const scale = 3.0; 
       const renderViewport = page.getViewport({ scale });
       
       const canvas = document.createElement('canvas');
@@ -319,8 +313,7 @@ function NewspaperLayoutContent() {
 
       if (context) {
         await page.render({ canvasContext: context, viewport: renderViewport }).promise;
-        // Optimization: Use WebP format and lower quality to reduce payload size
-        const image = canvas.toDataURL('image/webp', 0.8);
+        const image = canvas.toDataURL('image/png');
         setPageImage(image);
         return image;
       }
@@ -373,73 +366,27 @@ function NewspaperLayoutContent() {
     setSelectedFiles(newSelection);
   };
 
-  const processInParallel = async (indices: number[], concurrency: number = 3) => {
-    const results: Article[] = [];
-    const chunks = [];
-    for (let i = 0; i < indices.length; i += concurrency) {
-      chunks.push(indices.slice(i, i + concurrency));
-    }
-
-    for (const chunk of chunks) {
-      const chunkResults = await Promise.all(chunk.map(async (index) => {
-        setProcessingFileIndex(index);
-        const file = files[index];
-        
-        // Render page for this specific file
-        const pdfjs = pdfjsRef.current;
-        if (!pdfjs) return [];
-        
-        try {
-          const arrayBuffer = await file.arrayBuffer();
-          const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
-          const pdfDoc = await loadingTask.promise;
-          const page = await pdfDoc.getPage(1);
-          
-          // Render to image for Gemini
-          const viewport = page.getViewport({ scale: 1.0 });
-          const MAX_WIDTH = 1600;
-          let scale = 2.0;
-          if (viewport.width * scale > MAX_WIDTH) {
-            scale = MAX_WIDTH / viewport.width;
-          }
-          const renderViewport = page.getViewport({ scale });
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
-          canvas.height = renderViewport.height;
-          canvas.width = renderViewport.width;
-          
-          if (context) {
-            await page.render({ canvasContext: context, viewport: renderViewport }).promise;
-            const image = canvas.toDataURL('image/webp', 0.8);
-            return await handleExtractArticles(pdfDoc, image, 1, file.name);
-          }
-          return [];
-        } catch (error) {
-          console.error(`Error processing file ${file.name}:`, error);
-          return [];
-        } finally {
-          setProcessingFileIndex(null);
-        }
-      }));
-      
-      chunkResults.forEach(articles => results.push(...articles));
-    }
-    return results;
-  };
-
   const handleExtractSelected = async () => {
     if (selectedFiles.size === 0) return;
     
     setArticles([]);
     setProcessingTime(null);
     const startTime = Date.now();
+    let allArticles: Article[] = [];
     
     const indices = Array.from(selectedFiles).sort((a, b) => 
       files[a].name.localeCompare(files[b].name, undefined, { numeric: true, sensitivity: 'base' })
     );
-
-    const allArticles = await processInParallel(indices);
-    
+    for (const index of indices) {
+      setProcessingFileIndex(index);
+      setCurrentFileIndex(index);
+      const result = await loadFile(files[index], false);
+      if (result) {
+        const extracted = await handleExtractArticles(result.pdfDoc, result.image || '', 1, files[index].name);
+        allArticles = [...allArticles, ...extracted];
+      }
+    }
+    setProcessingFileIndex(null);
     const merged = mergeArticles(allArticles);
     setArticles(merged);
     localStorage.setItem('extracted_articles', JSON.stringify(merged));
@@ -450,13 +397,21 @@ function NewspaperLayoutContent() {
     setArticles([]);
     setProcessingTime(null);
     const startTime = Date.now();
-    
+    let allArticles: Article[] = [];
     const sortedIndices = Array.from({ length: files.length }, (_, i) => i).sort((a, b) => 
       files[a].name.localeCompare(files[b].name, undefined, { numeric: true, sensitivity: 'base' })
     );
 
-    const allArticles = await processInParallel(sortedIndices);
-    
+    for (const index of sortedIndices) {
+      setProcessingFileIndex(index);
+      setCurrentFileIndex(index);
+      const result = await loadFile(files[index], false);
+      if (result) {
+        const extracted = await handleExtractArticles(result.pdfDoc, result.image || '', 1, files[index].name);
+        allArticles = [...allArticles, ...extracted];
+      }
+    }
+    setProcessingFileIndex(null);
     const merged = mergeArticles(allArticles);
     setArticles(merged);
     localStorage.setItem('extracted_articles', JSON.stringify(merged));
