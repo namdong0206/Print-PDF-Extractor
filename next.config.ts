@@ -20,6 +20,7 @@ const nextConfig: NextConfig = {
     ],
   },
   transpilePackages: ['motion'],
+  serverExternalPackages: ['pdfjs-dist'],
   webpack: (config, {dev, isServer}) => {
     // Fix for pdfjs-dist
     if (!isServer) {

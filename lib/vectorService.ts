@@ -44,9 +44,9 @@ export const extractVectorData = async (page: any): Promise<VectorData> => {
     const pageHeight = viewport.height;
 
     if (!pdfjsModule) {
-      pdfjsModule = await import('pdfjs-dist/build/pdf.min.mjs');
+      pdfjsModule = await import('pdfjs-dist/legacy/build/pdf.min.mjs');
     }
-    const pdfjs = (pdfjsModule as any).default || pdfjsModule;
+    const pdfjs = pdfjsModule;
     
     if (!pdfjs || typeof pdfjs !== 'object') {
       throw new Error('Failed to load pdfjs-dist');

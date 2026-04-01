@@ -9,6 +9,7 @@ export interface TextBlock {
   b: boolean; // is_bold
   x: number;
   y: number;
+  w?: number; // width
   l?: string; // label (from HLA)
   ind?: boolean; // is_indented
 }
@@ -25,33 +26,54 @@ export interface Article {
   fileName?: string;
 }
 
+export const normalize = (s: string) => s.toLowerCase()
+  .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
+// Hàm tìm chiều dài chuỗi con chung dài nhất (Longest Common Substring)
+const getLongestCommonSubstringLen = (s1: string, s2: string): number => {
+  let maxLen = 0;
+  const dp = Array(2).fill(0).map(() => Array(s2.length + 1).fill(0));
+  
+  for (let i = 1; i <= s1.length; i++) {
+    const currRow = i % 2;
+    const prevRow = (i - 1) % 2;
+    for (let j = 1; j <= s2.length; j++) {
+      if (s1[i - 1] === s2[j - 1]) {
+        dp[currRow][j] = dp[prevRow][j - 1] + 1;
+        maxLen = Math.max(maxLen, dp[currRow][j]);
+      } else {
+        dp[currRow][j] = 0;
+      }
+    }
+  }
+  return maxLen;
+};
+
+// Hàm tính toán độ tương đồng của tiêu đề (so sánh trên toàn bộ chuỗi)
+export const getTitleSimilarity = (t1: string, t2: string) => {
+  const s1 = normalize(t1);
+  const s2 = normalize(t2);
+  if (s1 === s2) return 1;
+  
+  const minLen = Math.min(s1.length, s2.length);
+  if (minLen < 10) return s1 === s2 ? 1 : 0; // Tiêu đề quá ngắn thì yêu cầu khớp chính xác
+
+  // Tìm chuỗi con chung dài nhất giữa 2 tiêu đề
+  const lcsLen = getLongestCommonSubstringLen(s1, s2);
+  
+  return lcsLen / minLen;
+};
+
+// Hàm kiểm tra độ tương đồng phần đầu (ít nhất 80%)
+export const isSimilarTitle = (t1: string, t2: string) => {
+  return getTitleSimilarity(t1, t2) >= 0.8;
+};
+
 export function mergeArticles(articles: Article[]): Article[] {
   const merged: Article[] = [];
   
-  const normalize = (s: string) => s.toLowerCase()
-    .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  // Hàm kiểm tra độ tương đồng phần đầu (ít nhất 80%)
-  const isSimilarTitle = (t1: string, t2: string) => {
-    const s1 = normalize(t1);
-    const s2 = normalize(t2);
-    if (s1 === s2) return true;
-    
-    const minLen = Math.min(s1.length, s2.length);
-    if (minLen < 10) return s1 === s2; // Tiêu đề quá ngắn thì yêu cầu khớp chính xác
-
-    // Kiểm tra xem phần chung ở đầu có chiếm ít nhất 80% chiều dài của tiêu đề ngắn hơn không
-    let commonPrefixLen = 0;
-    for (let i = 0; i < minLen; i++) {
-      if (s1[i] === s2[i]) commonPrefixLen++;
-      else break;
-    }
-    
-    return (commonPrefixLen / minLen) >= 0.8;
-  };
-
   const cleanContent = (content: string[]) => {
     const cues = [
       /^\(xem trang.*\)$/i,
@@ -65,7 +87,9 @@ export function mergeArticles(articles: Article[]): Article[] {
       /tiếp theo trang \d+/i,
       /xem tiếp trang \d+/i
     ];
-    return content.filter(para => {
+    
+    // Lọc và làm sạch các đoạn văn
+    const cleanedParagraphs = content.filter(para => {
       const trimmed = para.trim();
       return !cues.some(regex => regex.test(trimmed));
     }).map(para => {
@@ -76,14 +100,47 @@ export function mergeArticles(articles: Article[]): Article[] {
       });
       return cleaned;
     }).filter(p => p.length > 0);
+
+    // Nối đoạn nếu:
+    // 1. Đoạn trước kết thúc bằng dấu phẩy
+    // 2. Hoặc đoạn trước KHÔNG kết thúc bằng dấu chấm/chấm hỏi/chấm than VÀ đoạn tiếp theo bắt đầu bằng chữ thường
+    const mergedParagraphs: string[] = [];
+    for (let i = 0; i < cleanedParagraphs.length; i++) {
+      let current = cleanedParagraphs[i];
+      
+      while (i + 1 < cleanedParagraphs.length) {
+        const currentTrimmed = current.trim();
+        const nextTrimmed = cleanedParagraphs[i + 1].trim();
+        
+        const endsWithComma = currentTrimmed.endsWith(',');
+        const doesNotEndWithSentencePunctuation = !currentTrimmed.match(/[.!?]$/);
+        
+        const firstCharNext = nextTrimmed.charAt(0);
+        // Kiểm tra xem ký tự đầu tiên có phải là chữ thường không (bao gồm cả tiếng Việt)
+        const isNextLowercase = firstCharNext === firstCharNext.toLowerCase() && firstCharNext !== firstCharNext.toUpperCase();
+
+        if (endsWithComma || (doesNotEndWithSentencePunctuation && isNextLowercase)) {
+          current = currentTrimmed + " " + nextTrimmed;
+          i++;
+        } else {
+          break;
+        }
+      }
+      mergedParagraphs.push(current);
+    }
+
+    return mergedParagraphs;
   };
 
   for (const article of articles) {
     let existingIndex = merged.findIndex(a => isSimilarTitle(a.title, article.title));
     
     if (existingIndex === -1) {
-      // Try to match by seePage cues if title matching fails
+      // Try to match by seePage cues if title matching fails but similarity is at least 30%
       existingIndex = merged.findIndex(a => {
+        const similarity = getTitleSimilarity(a.title, article.title);
+        if (similarity < 0.3) return false;
+
         const cleanSeePage = (s: string) => s.replace(/[()]/g, "").trim();
         const aSeePage = cleanSeePage(a.seePage || "");
         const artSeePage = cleanSeePage(article.seePage || "");
@@ -126,11 +183,11 @@ export function mergeArticles(articles: Article[]): Article[] {
       const newContent = article.content.filter(p => !existing.content.includes(p));
       
       // Xác định thứ tự ghép dựa trên semantic cues hoặc số trang
-      const isArticleContinuation = /tiếp theo trang|tiếp từ trang/i.test(article.seePage || "");
-      const isArticleStart = /xem trang|xem tiếp trang/i.test(article.seePage || "");
+      const isArticleContinuation = /tiếp theo trang|tiếp từ trang|tiếp theo/i.test(article.seePage || "");
+      const isArticleStart = /xem trang|xem tiếp trang|xem tiếp/i.test(article.seePage || "");
       
-      const isExistingContinuation = /tiếp theo trang|tiếp từ trang/i.test(existing.seePage || "");
-      const isExistingStart = /xem trang|xem tiếp trang/i.test(existing.seePage || "");
+      const isExistingContinuation = /tiếp theo trang|tiếp từ trang|tiếp theo/i.test(existing.seePage || "");
+      const isExistingStart = /xem trang|xem tiếp trang|xem tiếp/i.test(existing.seePage || "");
 
       let append = true;
       
@@ -140,8 +197,14 @@ export function mergeArticles(articles: Article[]): Article[] {
       } else if (isArticleStart && isExistingContinuation) {
         // Article là phần đầu, Existing là phần tiếp theo -> Prepend
         append = false;
+      } else if (isArticleContinuation && !isExistingContinuation) {
+        // Article là phần tiếp theo, Existing không rõ -> Append
+        append = true;
+      } else if (isArticleStart && !isExistingStart) {
+        // Article là phần đầu, Existing không rõ -> Prepend
+        append = false;
       } else {
-        // Fallback to page number nếu không có cue rõ ràng
+        // Fallback to page number nếu không có cue rõ ràng hoặc cues mâu thuẫn
         append = article.pageNumbers[0] > existing.pageNumbers[existing.pageNumbers.length - 1];
       }
 
@@ -163,6 +226,26 @@ export function mergeArticles(articles: Article[]): Article[] {
       merged.push(newArt);
     }
   }
+
+  // Xử lý đoạn cuối cùng của mỗi bài báo
+  merged.forEach(article => {
+    if (article.content.length > 0) {
+      const lastIndex = article.content.length - 1;
+      let lastPara = article.content[lastIndex].trim();
+      
+      if (lastPara.endsWith('■')) {
+        lastPara = lastPara.slice(0, -1).trim();
+        if (!lastPara.match(/[.!?]$/)) {
+          lastPara += '.';
+        }
+      } else if (!lastPara.match(/[.!?]$/)) {
+        lastPara += '.';
+      }
+      
+      article.content[lastIndex] = lastPara;
+    }
+  });
+
   return merged;
 }
 
@@ -187,6 +270,7 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
         fs: fontSize,
         x: item.transform[4],
         y: pageHeight - item.transform[5] - fontSize,
+        w: item.width || (item.str.length * fontSize * 0.5), // Ước tính nếu thiếu width
         b: item.fontName?.toLowerCase().includes('bold') || item.fontName?.toLowerCase().includes('heavy') || false,
       };
     });
@@ -199,19 +283,28 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
       return a.y - b.y;
     });
 
-    // 3. Gom các items thành dòng (Line merging) - Cực kỳ quyết liệt
+    // 3. Gom các items thành dòng (Line merging)
+    // Cải tiến: Phát hiện "Horizontal Merging" để chẻ các block thuộc 2 cột khác nhau (Vertical Split)
     const lineBlocks: TextBlock[] = [];
     let currentLine = { ...rawBlocks[0] };
 
     for (let i = 1; i < rawBlocks.length; i++) {
       const nextItem = rawBlocks[i];
+      
       // Cho phép chênh lệch y lớn hơn để gom các dòng bị lệch nhẹ
       const sameLine = Math.abs(currentLine.y - nextItem.y) < 12;
-      // Khoảng cách x rất rộng để gom các thành phần rời rạc trong cùng một dòng/vùng
-      const closeX = nextItem.x - (currentLine.x + currentLine.t.length * (currentLine.fs * 0.3)) < 200;
+      
+      // Tính toán khoảng cách X giữa kết thúc của currentLine và bắt đầu của nextItem
+      const gap = nextItem.x - (currentLine.x + (currentLine.w || 0));
+      
+      // Ngưỡng chẻ dọc (Vertical Split) dựa trên khoảng trống giữa các cột (mặc định 40)
+      const minGap = 40; 
+      const isLargeGap = gap > minGap;
 
-      if (sameLine && closeX) {
+      if (sameLine && !isLargeGap) {
         currentLine.t += " " + nextItem.t;
+        // Cập nhật chiều rộng tổng cộng của dòng
+        currentLine.w = (nextItem.x + (nextItem.w || 0)) - currentLine.x;
       } else {
         lineBlocks.push(currentLine);
         currentLine = { ...nextItem };
@@ -327,18 +420,17 @@ export async function extractArticlesHybrid(
   
   const ai = new GoogleGenAI({ apiKey });
   
-  // Làm sạch dữ liệu gửi đi: Loại bỏ header/footer của trang khác khỏi các block
-  const cleanedZones = zones.map(zone => {
-    return {
-      ...zone,
-      blocks: zone.blocks
-        .map(b => ({
-          ...b,
-          text: b.text.replace(/CHÍNH TRỊ\s+\d+\/\d+\/\d+\s+\d+/gi, '').trim()
-        }))
-        .filter(b => b.text.length > 0)
-    };
-  }).filter(zone => zone.blocks.length > 0);
+  // Làm sạch dữ liệu gửi đi: Loại bỏ header/footer của trang khác và chỉ giữ lại zone bài báo
+  // Bao gồm cả zone 'unknown' để tránh bỏ sót nội dung
+  const cleanedZones = zones
+    .filter(zone => zone.type === 'article' || zone.type === 'unknown')
+    .map(zone => {
+      return {
+        ...zone,
+        blocks: zone.blocks
+          .filter(b => b.text.trim().length > 0)
+      };
+    }).filter(zone => zone.blocks.length > 0);
 
   const optimizedZones = cleanedZones.map(zone => ({
     id: zone.id,
@@ -352,29 +444,20 @@ export async function extractArticlesHybrid(
   }));
 
   const jsonPayload = JSON.stringify(optimizedZones);
-  console.log(`Kích thước gửi: ${(new Blob([jsonPayload]).size / 1024).toFixed(2)} KB (Zones: ${zones.length})`);
+  console.log(`Kích thước gửi: ${(new Blob([jsonPayload]).size / 1024).toFixed(2)} KB (Zones: ${cleanedZones.length})`);
 
   const prompt = `
-  Bạn là chuyên gia biên tập báo chí chuyên nghiệp. 
-  Đầu vào là:
-  1. Hình ảnh trang báo (để bạn thấy luồng đọc, đường kẻ, ảnh).
-  2. Danh sách các vùng bài báo (Zones) đã được phân tách sơ bộ dưới dạng JSON.
-
-  Nhiệm vụ: Đối chiếu hình ảnh với dữ liệu JSON để sắp xếp lại nội dung thành các bài báo hoàn chỉnh.
+  Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất và sắp xếp lại nội dung thành các bài báo hoàn chỉnh từ JSON zones.
   
-  QUY TẮC NGHIÊM NGẶT:
-  1. CHỈ XỬ LÝ NỘI DUNG TRANG HIỆN TẠI: Tuyệt đối không xử lý nội dung thuộc về các trang khác (ví dụ: Header, Footer, Tiêu đề bài báo của trang sau). Nếu thấy nội dung này, hãy bỏ qua hoàn toàn.
-  2. GIỮ NGUYÊN VĂN NỘI DUNG: Tuyệt đối giữ nguyên văn nội dung từ các block, KHÔNG được tóm tắt, KHÔNG viết lại, KHÔNG sửa đổi bất kỳ từ ngữ nào. Nhiệm vụ duy nhất là sắp xếp các đoạn văn theo đúng thứ tự đọc logic.
-  3. NHẬN DIỆN BÀI NỐI TRANG: 
-     - Tìm các chỉ dẫn "XEM TRANG ..." hoặc "Xem tiếp trang ..." ở cuối bài báo (thường là phần đầu của bài).
-     - Tìm các chỉ dẫn "Tiếp theo trang ..." hoặc "Tiếp từ trang ..." ở đầu bài báo (thường là phần tiếp theo ở trang khác).
-     - Lưu các chỉ dẫn này vào trường "seePage".
-     - TUYỆT ĐỐI KHÔNG bao gồm các chỉ dẫn này trong mảng "content".
-  4. TIÊU ĐỀ BÀI NỐI: Tiêu đề ở các trang khác nhau của cùng một bài báo sẽ rất giống nhau (ít nhất 80% phần đầu). Hãy giữ nguyên tiêu đề gốc để hệ thống có thể ghép lại. Nếu bài báo là phần tiếp theo từ trang trước, hãy trích xuất chính xác tiêu đề của bài báo đó (thường được in đậm hoặc in hoa nhỏ ở đầu phần tiếp theo) để làm "title".
-  5. GỘP SAPO VÀ TÍT PHỤ VÀO CONTENT: KHÔNG tách riêng Sapo (Lead) hay Tít phụ (Subtitle). Hãy gộp toàn bộ Sapo, Tít phụ và Nội dung bài viết vào chung mảng "content" theo đúng thứ tự đọc từ trên xuống dưới. Điều này rất quan trọng để tránh đảo lộn thứ tự.
-  6. GIỮ LẠI chú thích ảnh (Caption) và gán vào trường "imageCaption". LOẠI BỎ: Header, Footer, Quảng cáo, Số trang. LƯU Ý: Tuyệt đối không loại bỏ tiêu đề bài báo (Headline) ngay cả khi nó nằm gần hoặc cùng vùng với Header/Footer.
-  7. Ghép các đoạn văn (Content) theo đúng thứ tự logic. Nếu một bài bị chia ra nhiều Zone trong cùng 1 trang, hãy ghép lại ngay.
-  8. KHÔNG lặp lại Tiêu đề (Title) trong phần Nội dung (Content).
+  QUY TẮC QUAN TRỌNG:
+  1. KHÔNG tóm tắt, KHÔNG sửa nội dung, KHÔNG bỏ sót bất kỳ đoạn văn nào thuộc về bài báo.
+  2. Gộp Sapo/Tít phụ vào Content.
+  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
+  4. Giữ nguyên tiêu đề bài báo.
+  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác.
+  6. Nếu một đoạn văn trông giống Caption nhưng chứa nội dung dẫn dắt câu chuyện, hãy giữ lại trong Content.
+  7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
+  8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
@@ -382,94 +465,114 @@ export async function extractArticlesHybrid(
 
   console.time("GeminiAPITime");
   
-  const MODEL = "gemini-3-flash-preview";
+  const modelsToTry = [
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview"
+  ];
 
-  try {
-    const contents: any[] = [];
-    if (base64Image) {
-      const base64Data = base64Image.split(',')[1] || base64Image;
-      contents.push({
-        parts: [
-          { inlineData: { data: base64Data, mimeType: "image/png" } },
-          { text: prompt }
-        ]
-      });
-    } else {
-      contents.push({ parts: [{ text: prompt }] });
-    }
+  let finalArticles: Article[] = [];
+  let success = false;
+  let lastError: any = null;
 
-    const responseStream = await ai.models.generateContentStream({
-      model: MODEL,
-      contents: contents,
-      config: {
-        temperature: 0,
-        responseMimeType: "application/json",
-        thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING },
-              author: { type: Type.STRING },
-              content: { 
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-              },
-              seePage: { type: Type.STRING },
-              imageCaption: { type: Type.STRING }
-            },
-            required: ["title", "content"]
-          }
-        },
-      },
+  const contents: any[] = [];
+  if (base64Image) {
+    const base64Data = base64Image.split(',')[1] || base64Image;
+    contents.push({
+      parts: [
+        { inlineData: { data: base64Data, mimeType: "image/png" } },
+        { text: prompt }
+      ]
     });
+  } else {
+    contents.push({ parts: [{ text: prompt }] });
+  }
 
-    let fullText = "";
-    const emittedIds = new Set<string>();
-    const finalArticles: Article[] = [];
+  for (const model of modelsToTry) {
+    try {
+      console.log(`Đang thử model: ${model}`);
+      const responseStream = await ai.models.generateContentStream({
+        model: model,
+        contents: contents,
+        config: {
+          temperature: 0,
+          responseMimeType: "application/json",
+          thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                author: { type: Type.STRING },
+                content: { 
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING }
+                },
+                seePage: { type: Type.STRING },
+                imageCaption: { type: Type.STRING }
+              },
+              required: ["title", "content"]
+            }
+          },
+        },
+      });
 
-    for await (const chunk of responseStream) {
-      if (chunk.text) {
-        fullText += chunk.text;
-        
-        const parsedObjects = extractCompleteObjects(fullText);
-        
-        for (let i = 0; i < parsedObjects.length; i++) {
-          const art = parsedObjects[i];
-          const id = `${fileName}-${pageNumber}-${i}`;
+      let fullText = "";
+      const emittedIds = new Set<string>();
+      finalArticles = []; // Reset for each model attempt
+
+      for await (const chunk of responseStream) {
+        if (chunk.text) {
+          fullText += chunk.text;
           
-          if (!emittedIds.has(id)) {
-            emittedIds.add(id);
+          const parsedObjects = extractCompleteObjects(fullText);
+          
+          for (let i = 0; i < parsedObjects.length; i++) {
+            const art = parsedObjects[i];
+            const id = `${fileName}-${pageNumber}-${i}`;
             
-            const article: Article = {
-              id,
-              title: art.title || "Không có tiêu đề",
-              author: art.author || "",
-              content: (Array.isArray(art.content) ? art.content : [])
-                .map((p: string) => p.trim())
-                .filter((p: string) => p.length > 0),
-              imageCaption: art.imageCaption || "",
-              seePage: art.seePage || "",
-              pageNumbers: [pageNumber],
-              fileName: fileName,
-              articleRegionId: ""
-            };
-            
-            finalArticles.push(article);
-            if (onArticleParsed) {
-              onArticleParsed(article);
+            if (!emittedIds.has(id)) {
+              emittedIds.add(id);
+              
+              const article: Article = {
+                id,
+                title: art.title || "Không có tiêu đề",
+                author: art.author || "",
+                content: (Array.isArray(art.content) ? art.content : [])
+                  .map((p: string) => p.trim())
+                  .filter((p: string) => p.length > 0),
+                imageCaption: art.imageCaption || "",
+                seePage: art.seePage || "",
+                pageNumbers: [pageNumber],
+                fileName: fileName,
+                articleRegionId: ""
+              };
+              
+              finalArticles.push(article);
+              if (onArticleParsed) {
+                onArticleParsed(article);
+              }
             }
           }
         }
       }
+      
+      success = true;
+      break; // Thoát khỏi vòng lặp nếu thành công
+    } catch (error: any) {
+      console.error(`Lỗi với model ${model}:`, error);
+      lastError = error;
+      // Chuyển sang model tiếp theo nếu gặp lỗi (đặc biệt là lỗi quota 429)
+      console.log(`Chuyển sang model tiếp theo...`);
     }
-
-    console.timeEnd("GeminiAPITime");
-    return finalArticles;
-  } catch (error) {
-    console.timeEnd("GeminiAPITime");
-    console.error("Error in extractArticlesHybrid:", error);
-    throw error;
   }
+
+  console.timeEnd("GeminiAPITime");
+
+  if (!success) {
+    throw new Error("Thành thật xin lỗi! Hiện đã hết quota Gemini để xử lý. Xin chờ đến hôm sau mình làm tiếp nhé!");
+  }
+
+  return finalArticles;
 }

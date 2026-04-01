@@ -16,6 +16,7 @@ import {
   Layers, 
   Scissors,
   Info,
+  Check,
   CheckCircle2,
   Copy,
   Loader2,
@@ -26,13 +27,16 @@ import {
   FileDown
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { parseNewspaperLayout, parseNewspaperLayoutHybrid } from '@/lib/layoutService';
+import { parseNewspaperLayout } from '@/lib/layoutService';
+import { parseNewspaperLayoutHybrid } from '@/lib/hlaService';
 import { ArticleRegion, BoundingBox } from '@/lib/types';
 import { segmentRegions, Region, groupBoxesByArticleRegion } from '@/lib/segmentationService';
-import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles } from '@/lib/geminiProcessor';
+import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles, isSimilarTitle } from '@/lib/geminiProcessor';
 import { processArticleContent } from '@/lib/textProcessor';
 import { HLAZone } from '@/lib/hlaService';
 import { exportArticleToWord, exportAllArticlesToZip } from '@/lib/wordExport';
+import * as Comlink from 'comlink';
+import { getCache, setCache } from '@/lib/cacheService';
 
 enum OperationType {
   CREATE = 'create',
@@ -182,6 +186,7 @@ function NewspaperLayoutContent() {
   const [selectedArticleRegion, setSelectedArticleRegion] = useState<ArticleRegion | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingFileIndices, setProcessingFileIndices] = useState<Set<number>>(new Set());
+  const [completedFileIndices, setCompletedFileIndices] = useState<Set<number>>(new Set());
   const [isExtracting, setIsExtracting] = useState(false);
   const [boxes, setBoxes] = useState<BoundingBox[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
@@ -224,6 +229,18 @@ function NewspaperLayoutContent() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const articleDetailRef = useRef<HTMLDivElement>(null);
   const articleListRef = useRef<HTMLDivElement>(null);
+  const fileListRef = useRef<HTMLDivElement>(null);
+
+  // Tự động cuộn danh sách file đến file đang được xử lý
+  useEffect(() => {
+    if (fileListRef.current && processingFileIndices.size > 0) {
+      const firstProcessingIndex = Array.from(processingFileIndices)[0];
+      const fileElement = fileListRef.current.children[firstProcessingIndex] as HTMLElement;
+      if (fileElement) {
+        fileElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }, [processingFileIndices]);
 
   useEffect(() => {
     setIsClient(true);
@@ -241,16 +258,15 @@ function NewspaperLayoutContent() {
     // Load pdfjs only on client
     const loadPdfJs = async () => {
       try {
-        const pdfjsModule = await import('pdfjs-dist/build/pdf.min.mjs');
-        const pdfjs = (pdfjsModule as any).default || pdfjsModule;
+        const pdfjs = await import('pdfjs-dist/legacy/build/pdf.min.mjs');
         
-        if (pdfjs && typeof pdfjs === 'object') {
+        if (pdfjs) {
           pdfjsRef.current = pdfjs;
           
           if (pdfjs.GlobalWorkerOptions) {
-            // Use the version from the package or fallback to 5.5.207
-            const version = pdfjs.version || '5.5.207';
-            pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+            // Use the version from the package
+            const version = pdfjs.version || '5.6.205';
+            pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/legacy/build/pdf.worker.min.mjs`;
           }
         }
       } catch (error) {
@@ -262,11 +278,19 @@ function NewspaperLayoutContent() {
 
   useEffect(() => {
     if (selectedArticle && articleDetailRef.current) {
-      articleDetailRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      articleDetailRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [selectedArticle]);
 
-  if (!isClient) return <div className="min-h-screen bg-[#FDFCFB]" />;
+  // Tự động cuộn xuống cuối danh sách khi có bài báo mới được trích xuất hoặc cập nhật
+  useEffect(() => {
+    if (articleListRef.current && articles.length > 0 && isExtracting) {
+      articleListRef.current.scrollTo({
+        top: articleListRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }, [articles, isExtracting]);
 
   const clearOldArticles = async () => {
     try {
@@ -290,6 +314,7 @@ function NewspaperLayoutContent() {
     
     const newFiles = Array.from(uploadedFiles);
     setFiles(newFiles);
+    setCompletedFileIndices(new Set());
     setCurrentFileIndex(0);
     setPdf(null);
     setNumPages(0);
@@ -336,7 +361,11 @@ function NewspaperLayoutContent() {
     try {
       if (fileToLoad.type === 'application/pdf') {
         const arrayBuffer = await fileToLoad.arrayBuffer();
-        const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+        const loadingTask = pdfjs.getDocument({ 
+          data: arrayBuffer,
+          disableFontFace: true,
+          disableRange: true
+        });
         const pdfDoc = await loadingTask.promise;
         setPdf(pdfDoc);
         setNumPages(pdfDoc.numPages);
@@ -402,13 +431,36 @@ function NewspaperLayoutContent() {
     return null;
   };
 
+  const workerRef = useRef<any>(null);
+
+  useEffect(() => {
+    // Khởi tạo Worker
+    const worker = new Worker(new URL('@/lib/worker.ts', import.meta.url));
+    workerRef.current = Comlink.wrap(worker);
+    
+    return () => worker.terminate();
+  }, []);
+
   const handleParseLayout = async () => {
     if (!pdf || !pageImage) return;
     setIsProcessing(true);
     
     try {
       const page = await pdf.getPage(currentPage);
-      const result = await parseNewspaperLayout(page, pageImage);
+      
+      // 1. Kiểm tra Cache
+      const cacheKey = `${files[currentFileIndex].name}-${currentPage}`;
+      const cached = await getCache('layoutCache', cacheKey);
+      
+      let result;
+      if (cached) {
+        result = cached;
+      } else {
+        // 2. Gọi Worker xử lý layout
+        result = await workerRef.current.processLayout(page);
+        await setCache('layoutCache', cacheKey, result);
+      }
+
       setBoxes(result.boxes);
       setMaskImage(result.maskImage || null);
       setArticleRegions(result.cells || []);
@@ -445,73 +497,82 @@ function NewspaperLayoutContent() {
 
   const processInParallel = async (indices: number[], concurrency: number = 2) => {
     const results: Article[] = [];
-    const chunks = [];
-    for (let i = 0; i < indices.length; i += concurrency) {
-      chunks.push(indices.slice(i, i + concurrency));
-    }
-
+    let currentIndex = 0;
+    
     const handleArticleParsed = (article: Article) => {
-      const isMultiPage = !!article.seePage;
+      setArticles(prev => {
+        const merged = mergeArticles([...prev, article]);
+        
+        // Find the merged version of this article to save to Firestore
+        const mergedArticle = merged.find(a => isSimilarTitle(a.title, article.title));
+        if (mergedArticle) {
+          setDoc(doc(db, 'articles', mergedArticle.id), mergedArticle).catch(e => console.error("Error saving article:", e));
+        }
+        
+        return merged;
+      });
+    };
+
+    const processNext = async (): Promise<void> => {
+      if (currentIndex >= indices.length) return;
       
-      if (!isMultiPage) {
-        setArticles(prev => {
-          if (prev.some(a => a.id === article.id)) return prev;
-          const newArticles = [...prev, article];
-          // Save standalone articles to Firestore immediately during stream
-          setDoc(doc(db, 'articles', article.id), article).catch(e => console.error("Error saving streamed article:", e));
-          return newArticles;
+      const index = indices[currentIndex++];
+      setProcessingFileIndices(prev => new Set(prev).add(index));
+      const file = files[index];
+      
+      // Render page for this specific file
+      const pdfjs = pdfjsRef.current;
+      if (!pdfjs) return;
+      
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+        const pdfDoc = await loadingTask.promise;
+        // Always get page 1 of the current file
+        const page = await pdfDoc.getPage(1);
+        
+        // Render to image for Gemini
+        const viewport = page.getViewport({ scale: 1.0 });
+        const MAX_WIDTH = 1600;
+        let scale = 2.0;
+        if (viewport.width * scale > MAX_WIDTH) {
+          scale = MAX_WIDTH / viewport.width;
+        }
+        const renderViewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = renderViewport.height;
+        canvas.width = renderViewport.width;
+        
+        if (context) {
+          await page.render({ canvasContext: context, viewport: renderViewport }).promise;
+          const image = canvas.toDataURL('image/webp', 0.8);
+          // Pass 1 as the document page number, but index + 1 as the metadata page number
+          const fileArticles = await handleExtractArticles(pdfDoc, image, 1, file.name, handleArticleParsed, index + 1);
+          results.push(...fileArticles);
+        }
+      } catch (error: any) {
+        console.error(`Error processing file ${file.name}:`, error);
+        if (error?.message?.includes('Thành thật xin lỗi')) {
+          throw error; // Ném lỗi lên trên để dừng toàn bộ quá trình
+        }
+      } finally {
+        setProcessingFileIndices(prev => {
+          const next = new Set(prev);
+          next.delete(index);
+          return next;
         });
+        setCompletedFileIndices(prev => new Set(prev).add(index));
+        await processNext();
       }
     };
 
-    for (const chunk of chunks) {
-      const chunkResults = await Promise.all(chunk.map(async (index) => {
-        setProcessingFileIndices(prev => new Set(prev).add(index));
-        const file = files[index];
-        
-        // Render page for this specific file
-        const pdfjs = pdfjsRef.current;
-        if (!pdfjs) return [];
-        
-        try {
-          const arrayBuffer = await file.arrayBuffer();
-          const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
-          const pdfDoc = await loadingTask.promise;
-          const page = await pdfDoc.getPage(1);
-          
-          // Render to image for Gemini
-          const viewport = page.getViewport({ scale: 1.0 });
-          const MAX_WIDTH = 1600;
-          let scale = 2.0;
-          if (viewport.width * scale > MAX_WIDTH) {
-            scale = MAX_WIDTH / viewport.width;
-          }
-          const renderViewport = page.getViewport({ scale });
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
-          canvas.height = renderViewport.height;
-          canvas.width = renderViewport.width;
-          
-          if (context) {
-            await page.render({ canvasContext: context, viewport: renderViewport }).promise;
-            const image = canvas.toDataURL('image/webp', 0.8);
-            return await handleExtractArticles(pdfDoc, image, 1, file.name, handleArticleParsed);
-          }
-          return [];
-        } catch (error) {
-          console.error(`Error processing file ${file.name}:`, error);
-          return [];
-        } finally {
-          setProcessingFileIndices(prev => {
-            const next = new Set(prev);
-            next.delete(index);
-            return next;
-          });
-        }
-      }));
-      
-      chunkResults.forEach(articles => results.push(...articles));
+    const workers = [];
+    for (let i = 0; i < Math.min(concurrency, indices.length); i++) {
+      workers.push(processNext());
     }
+    
+    await Promise.all(workers);
     return results;
   };
 
@@ -519,6 +580,7 @@ function NewspaperLayoutContent() {
     if (selectedFiles.size === 0) return;
     
     setArticles([]);
+    setCompletedFileIndices(new Set());
     setProcessingTime(null);
     setIsProcessing(true);
     setIsExtracting(true);
@@ -530,22 +592,18 @@ function NewspaperLayoutContent() {
       );
 
       const allArticles = await processInParallel(indices);
-      
       const merged = mergeArticles(allArticles);
       setArticles(merged);
       localStorage.setItem('extracted_articles', JSON.stringify(merged));
       
-      // Save to Firestore
-      for (const article of merged) {
-        try {
-          await setDoc(doc(db, 'articles', article.id), article);
-        } catch (error) {
-          handleFirestoreError(error, OperationType.WRITE, `articles/${article.id}`);
-        }
-      }
-      
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
+    } catch (error: any) {
+      if (error?.message?.includes('Thành thật xin lỗi')) {
+        alert(error.message);
+      } else {
+        console.error("Lỗi trong quá trình trích xuất:", error);
+      }
     } finally {
       setIsProcessing(false);
       setIsExtracting(false);
@@ -554,6 +612,7 @@ function NewspaperLayoutContent() {
 
   const handleExtractAll = async () => {
     setArticles([]);
+    setCompletedFileIndices(new Set());
     setProcessingTime(null);
     setIsProcessing(true);
     setIsExtracting(true);
@@ -565,33 +624,36 @@ function NewspaperLayoutContent() {
       );
 
       const allArticles = await processInParallel(sortedIndices);
-      
       const merged = mergeArticles(allArticles);
       setArticles(merged);
       localStorage.setItem('extracted_articles', JSON.stringify(merged));
       
-      // Save to Firestore
-      for (const article of merged) {
-        try {
-          await setDoc(doc(db, 'articles', article.id), article);
-        } catch (error) {
-          handleFirestoreError(error, OperationType.WRITE, `articles/${article.id}`);
-        }
-      }
-      
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
+    } catch (error: any) {
+      if (error?.message?.includes('Thành thật xin lỗi')) {
+        alert(error.message);
+      } else {
+        console.error("Lỗi trong quá trình trích xuất:", error);
+      }
     } finally {
       setIsProcessing(false);
       setIsExtracting(false);
     }
   };
 
-  const handleExtractArticles = async (pdfDoc: any, image: string, pageNum: number, fileName: string, onArticleParsed?: (article: Article) => void): Promise<Article[]> => {
+  const handleExtractArticles = async (
+    pdfDoc: any, 
+    image: string, 
+    docPageNum: number, 
+    fileName: string, 
+    onArticleParsed?: (article: Article) => void,
+    metadataPageNum?: number
+  ): Promise<Article[]> => {
     if (!pdfDoc) return [];
 
     try {
-      const page = await pdfDoc.getPage(pageNum);
+      const page = await pdfDoc.getPage(docPageNum);
       
       // 1. Hybrid Layout Analysis (Heuristic)
       console.time("HLATime");
@@ -601,11 +663,16 @@ function NewspaperLayoutContent() {
       setHlaZones(zones);
       
       // 2. Semantic Extraction (Gemini 3 Flash - Multimodal)
-      const extractedArticles = await extractArticlesHybrid(zones, pageNum, fileName, image, onArticleParsed);
+      // Use metadataPageNum if provided, otherwise docPageNum
+      const finalPageNum = metadataPageNum ?? docPageNum;
+      const extractedArticles = await extractArticlesHybrid(zones, finalPageNum, fileName, image, onArticleParsed);
       
       return extractedArticles;
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error extracting articles:", error);
+      if (error?.message?.includes('Thành thật xin lỗi')) {
+        throw error;
+      }
       return [];
     }
   };
@@ -626,6 +693,10 @@ function NewspaperLayoutContent() {
       default: return 'stroke-gray-400 fill-gray-400/20 text-gray-800';
     }
   };
+
+  if (!isClient) return <div className="min-h-screen bg-[#FDFCFB]" />;
+
+  if (!isClient) return <div className="min-h-screen bg-[#FDFCFB]" />;
 
   return (
     <div className="min-h-screen bg-[#FDFCFB] text-[#1A1A1A] font-sans">
@@ -669,7 +740,7 @@ function NewspaperLayoutContent() {
       <main className="p-6 max-w-[1600px] mx-auto grid grid-cols-12 gap-6 h-[calc(100vh-80px)]">
         <div className="col-span-4 flex flex-col gap-4 h-full overflow-hidden">
           {files.length > 0 && (
-            <div className="flex flex-col gap-2 max-h-40 overflow-y-auto pb-2">
+            <div className="flex flex-col gap-2 max-h-40 overflow-y-auto pb-2" ref={fileListRef}>
               {files.map((f, index) => (
                 <button
                   key={index}
@@ -684,7 +755,12 @@ function NewspaperLayoutContent() {
                   )}
                 >
                   <div className="flex flex-col truncate">
-                    <span className="truncate">{f.name}</span>
+                    <div className="flex items-center gap-1 truncate">
+                      <span className="truncate">{f.name}</span>
+                      {completedFileIndices.has(index) && (
+                        <Check size={12} className="text-green-600 flex-shrink-0" />
+                      )}
+                    </div>
                     {processingFileIndices.has(index) && (
                       <span className="text-[10px] font-bold animate-pulse">Đang xử lý...</span>
                     )}
@@ -736,7 +812,7 @@ function NewspaperLayoutContent() {
                       key={idx} 
                       onClick={() => {
                         setSelectedArticle(article);
-                        setTimeout(() => articleDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+                        setTimeout(() => articleDetailRef.current?.scrollTo({ top: 0, behavior: 'smooth' }), 100);
                       }}
                       className={cn(
                         "p-2 rounded-lg border cursor-pointer transition-all",

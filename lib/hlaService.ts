@@ -1,5 +1,5 @@
 import { BoundingBox } from './types';
-import { VectorData, VectorLine, VectorRect, VectorImage } from './vectorService';
+import { VectorData, VectorLine, VectorRect, VectorImage, extractVectorData } from './vectorService';
 
 export interface HLAZone {
   id: string;
@@ -17,6 +17,7 @@ export interface HLABlock {
   isBold: boolean;
   isIndented: boolean;
   label: string;
+  items?: any[]; // Lưu trữ các item gốc để hỗ trợ chẻ dọc nếu cần
 }
 
 /**
@@ -41,15 +42,131 @@ export class HLAService {
     const blocks = this.preprocessBlocks(textItems);
 
     // 3. Phân tích bố cục bằng thuật toán XY-Cut tích hợp đường kẻ vector
-    const zones = this.xyCut(blocks, vectorData, pageWidth, pageHeight);
+    let zones = this.xyCut(blocks, vectorData, pageWidth, pageHeight);
 
-    // 4. Phân loại và gán nhãn cho các block trong từng zone (Heuristics)
+    // 4. Chẻ dọc các block bị gộp ngang (Horizontal Merging) - Áp dụng logic từ Python
+    zones = this.splitHorizontalMergedZones(zones);
+
+    // 5. Phân loại và gán nhãn cho các block trong từng zone (Heuristics)
     this.classifyBlocks(zones, vectorData.images);
 
-    // 5. Gom các block cùng nhãn trong cùng một zone để tối ưu hóa dữ liệu
+    // Sắp xếp lại các block trong mỗi zone theo thứ tự đọc (ưu tiên cột)
+    zones.forEach(zone => {
+      zone.blocks = this.sortBlocksByReadingOrder(zone.blocks);
+    });
+
+    // 6. Gom các block cùng nhãn trong cùng một zone để tối ưu hóa dữ liệu
     this.mergeBlocksInZones(zones);
 
     return zones;
+  }
+
+  /**
+   * Chẻ dọc các zone/block nếu phát hiện khoảng trống ngang lớn bên trong (Gutter gap) - Đệ quy
+   */
+  private splitHorizontalMergedZones(zones: HLAZone[]): HLAZone[] {
+    const split = (zone: HLAZone): HLAZone[] => {
+      const MIN_GAP = 35; // Ngưỡng chẻ dọc
+      let splitFound = false;
+      let splitX = 0;
+
+      // Tìm điểm chẻ trong các block của zone
+      for (const block of zone.blocks) {
+        if (!block.items || block.items.length < 2) continue;
+
+        for (let i = 1; i < block.items.length; i++) {
+          const prev = block.items[i - 1];
+          const curr = block.items[i];
+          const gap = curr.x - (prev.x + prev.width);
+
+          if (gap > MIN_GAP) {
+            splitX = prev.x + prev.width + (gap / 2);
+            splitFound = true;
+            break;
+          }
+        }
+        if (splitFound) break;
+      }
+
+      if (!splitFound) return [zone];
+
+      // Tiến hành chẻ zone thành Left và Right
+      const leftBlocks: HLABlock[] = [];
+      const rightBlocks: HLABlock[] = [];
+
+      zone.blocks.forEach(block => {
+        if (!block.items) {
+          if (block.bbox.x + block.bbox.width / 2 < splitX) leftBlocks.push(block);
+          else rightBlocks.push(block);
+          return;
+        }
+
+        const lItems = block.items.filter(item => {
+          const centerX = item.x + item.width / 2;
+          return centerX <= splitX;
+        });
+        const rItems = block.items.filter(item => {
+          const centerX = item.x + item.width / 2;
+          return centerX > splitX;
+        });
+
+        if (lItems.length > 0) {
+          leftBlocks.push(this.createBlockFromItems(lItems, `${block.id}-L`));
+        }
+        if (rItems.length > 0) {
+          rightBlocks.push(this.createBlockFromItems(rItems, `${block.id}-R`));
+        }
+      });
+
+      const result: HLAZone[] = [];
+      if (leftBlocks.length > 0) {
+        result.push(...split({
+          ...zone,
+          id: `${zone.id}-SplitL`,
+          bbox: this.calculateBBox(leftBlocks),
+          blocks: leftBlocks
+        }));
+      }
+      if (rightBlocks.length > 0) {
+        result.push(...split({
+          ...zone,
+          id: `${zone.id}-SplitR`,
+          bbox: this.calculateBBox(rightBlocks),
+          blocks: rightBlocks
+        }));
+      }
+      return result;
+    };
+
+    const finalZones: HLAZone[] = [];
+    zones.forEach(z => finalZones.push(...split(z)));
+    return finalZones;
+  }
+
+  private createBlockFromItems(items: any[], id: string): HLABlock {
+    const x = Math.min(...items.map(i => i.x));
+    const y = Math.min(...items.map(i => i.y));
+    const maxX = Math.max(...items.map(i => i.x + i.width));
+    const maxY = Math.max(...items.map(i => i.y + i.height));
+    return {
+      id,
+      text: items.map(i => i.text).join(' '),
+      bbox: { x, y, width: maxX - x, height: maxY - y },
+      fontSize: Math.max(...items.map(i => i.fontSize)),
+      fontName: items[0].fontName,
+      isBold: items[0].isBold,
+      isIndented: false,
+      label: 'unknown',
+      items
+    };
+  }
+
+  private calculateBBox(blocks: HLABlock[]) {
+    const x = Math.min(...blocks.map(b => b.bbox.x));
+    const y = Math.min(...blocks.map(b => b.bbox.y));
+    const maxX = Math.max(...blocks.map(b => b.bbox.x + b.bbox.width));
+    const maxY = Math.max(...blocks.map(b => b.bbox.y + b.bbox.height));
+    return { x, y, width: maxX - x, height: maxY - y };
   }
 
   /**
@@ -69,9 +186,9 @@ export class HLAService {
         const sameLabel = current.label === next.label;
         const closeVertical = Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < 15;
         
-        // Headline thường có thể gom rộng hơn
+        // Headline thường có thể gom rộng hơn (tăng lên 40pt để bắt các tiêu đề lớn nhiều dòng)
         const isHeadline = current.label === 'Headline';
-        const verticalThreshold = isHeadline ? 25 : 15;
+        const verticalThreshold = isHeadline ? 40 : 15;
 
         if (sameLabel && Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < verticalThreshold) {
           current.text += " " + next.text;
@@ -198,13 +315,84 @@ export class HLAService {
         fontName: line[0].fontName,
         isBold: line[0].isBold,
         isIndented: false, // Sẽ được cập nhật sau khi biết lề cột
-        label: 'unknown'
+        label: 'unknown',
+        items: line
       };
     });
   }
 
   /**
-   * Thuật toán XY-Cut đệ quy
+   * Sắp xếp các block theo thứ tự đọc thông minh (Column-aware sorting)
+   * Tuân thủ nguyên tắc:
+   * 1. Khối tiêu đề (Headline) và các phần phụ (Sapo, Caption, PageCue) đọc trước.
+   * 2. Các cột nội dung (Content) đọc sau, từ trái sang phải, từ trên xuống dưới.
+   */
+  private sortBlocksByReadingOrder(blocks: HLABlock[]): HLABlock[] {
+    if (blocks.length <= 1) return blocks;
+
+    const headerMetaBlocks: HLABlock[] = [];
+    const bodyBlocks: HLABlock[] = [];
+
+    // 1. Phân loại block thành nhóm Header/Meta và nhóm Body (Content)
+    blocks.forEach(block => {
+      if (['Headline', 'Sapo', 'Caption', 'PageCue'].includes(block.label)) {
+        headerMetaBlocks.push(block);
+      } else {
+        bodyBlocks.push(block);
+      }
+    });
+
+    // Sắp xếp nhóm Header/Meta từ trên xuống dưới
+    headerMetaBlocks.sort((a, b) => a.bbox.y - b.bbox.y);
+
+    // 2. Nhóm bodyBlocks vào các cột ảo dựa trên sự chồng lấp X
+    const columns: HLABlock[][] = [];
+    // Sắp xếp theo X trước để dễ nhóm
+    const sortedByX = [...bodyBlocks].sort((a, b) => a.bbox.x - b.bbox.x);
+
+    sortedByX.forEach(block => {
+      let placed = false;
+      for (const col of columns) {
+        // Lấy phạm vi X của cột hiện tại
+        const colX1 = Math.min(...col.map(b => b.bbox.x));
+        const colX2 = Math.max(...col.map(b => b.bbox.x + b.bbox.width));
+        
+        // Tính độ chồng lấp X
+        const overlapX = Math.max(0, Math.min(block.bbox.x + block.bbox.width, colX2) - Math.max(block.bbox.x, colX1));
+        const minWidth = Math.min(block.bbox.width, colX2 - colX1);
+        
+        // Nếu chồng lấp > 40% chiều rộng, coi như cùng cột
+        if (overlapX > minWidth * 0.4) {
+          col.push(block);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        columns.push([block]);
+      }
+    });
+
+    // 3. Sắp xếp các cột từ trái sang phải
+    columns.sort((a, b) => {
+      const aX = Math.min(...a.map(b => b.bbox.x));
+      const bX = Math.min(...b.map(b => b.bbox.x));
+      return aX - bX;
+    });
+
+    // 4. Sắp xếp các block trong mỗi cột từ trên xuống dưới
+    const sortedBody: HLABlock[] = [];
+    columns.forEach(col => {
+      col.sort((a, b) => a.bbox.y - b.bbox.y);
+      sortedBody.push(...col);
+    });
+
+    // 5. Gộp lại: Header/Meta đọc trước, Body đọc sau
+    return [...headerMetaBlocks, ...sortedBody];
+  }
+
+  /**
+   * Phân tích bố cục bằng thuật toán XY-Cut tích hợp đường kẻ vector và hình ảnh
    */
   private xyCut(
     blocks: HLABlock[],
@@ -223,19 +411,19 @@ export class HLAService {
     };
 
     const split = (zone: HLAZone, depth: number): HLAZone[] => {
-      if (depth > 10 || zone.blocks.length <= 1) return [zone];
+      if (depth > 15 || zone.blocks.length <= 1) return [zone];
 
-      // Thử cắt dọc (Vertical Cut - Chia cột)
-      const vGaps = this.findGaps(zone, 'V', vectorData.lines);
+      // 1. Thử cắt dọc (Vertical Cut - Chia cột)
+      const vGaps = this.findGaps(zone, 'V', vectorData.lines, vectorData.images);
       if (vGaps.length > 0) {
         // Ưu tiên các gap rộng hơn (máng xối)
         const sortedGaps = vGaps.sort((a, b) => b.width - a.width);
         const bestGap = sortedGaps[0];
         
         // Chỉ cắt nếu gap đủ rộng hoặc có đường kẻ phân tách
-        if (bestGap.width > 8) {
-          const leftBlocks = zone.blocks.filter(b => b.bbox.x + b.bbox.width <= bestGap.start + 2);
-          const rightBlocks = zone.blocks.filter(b => b.bbox.x >= bestGap.start + bestGap.width - 2);
+        if (bestGap.width > 6) {
+          const leftBlocks = zone.blocks.filter(b => b.bbox.x + b.bbox.width <= bestGap.start + 3);
+          const rightBlocks = zone.blocks.filter(b => b.bbox.x >= bestGap.start + bestGap.width - 3);
           
           if (leftBlocks.length > 0 && rightBlocks.length > 0) {
             const leftZone: HLAZone = {
@@ -255,27 +443,31 @@ export class HLAService {
         }
       }
 
-      // Thử cắt ngang (Horizontal Cut - Chia bài báo/khối)
-      const hGaps = this.findGaps(zone, 'H', vectorData.lines);
+      // 2. Thử cắt ngang (Horizontal Cut - Chia bài báo/khối)
+      const hGaps = this.findGaps(zone, 'H', vectorData.lines, vectorData.images);
       if (hGaps.length > 0) {
         const bestGap = hGaps.sort((a, b) => b.width - a.width)[0];
-        const topBlocks = zone.blocks.filter(b => b.bbox.y + b.bbox.height <= bestGap.start);
-        const bottomBlocks = zone.blocks.filter(b => b.bbox.y >= bestGap.start + bestGap.width);
+        
+        // Ngưỡng cắt ngang linh hoạt hơn
+        if (bestGap.width > 3) {
+          const topBlocks = zone.blocks.filter(b => b.bbox.y + b.bbox.height <= bestGap.start + 1);
+          const bottomBlocks = zone.blocks.filter(b => b.bbox.y >= bestGap.start + bestGap.width - 1);
 
-        if (topBlocks.length > 0 && bottomBlocks.length > 0) {
-          const topZone: HLAZone = {
-            id: `${zone.id}-T`,
-            bbox: { ...zone.bbox, height: bestGap.start - zone.bbox.y },
-            blocks: topBlocks,
-            type: 'unknown'
-          };
-          const bottomZone: HLAZone = {
-            id: `${zone.id}-B`,
-            bbox: { ...zone.bbox, y: bestGap.start + bestGap.width, height: zone.bbox.y + zone.bbox.height - (bestGap.start + bestGap.width) },
-            blocks: bottomBlocks,
-            type: 'unknown'
-          };
-          return [...split(topZone, depth + 1), ...split(bottomZone, depth + 1)];
+          if (topBlocks.length > 0 && bottomBlocks.length > 0) {
+            const topZone: HLAZone = {
+              id: `${zone.id}-T`,
+              bbox: { ...zone.bbox, height: bestGap.start - zone.bbox.y },
+              blocks: topBlocks,
+              type: 'unknown'
+            };
+            const bottomZone: HLAZone = {
+              id: `${zone.id}-B`,
+              bbox: { ...zone.bbox, y: bestGap.start + bestGap.width, height: zone.bbox.y + zone.bbox.height - (bestGap.start + bestGap.width) },
+              blocks: bottomBlocks,
+              type: 'unknown'
+            };
+            return [...split(topZone, depth + 1), ...split(bottomZone, depth + 1)];
+          }
         }
       }
 
@@ -285,17 +477,33 @@ export class HLAService {
     return split(root, 0);
   }
 
-  private findGaps(zone: HLAZone, direction: 'H' | 'V', lines: VectorLine[]) {
+  private findGaps(zone: HLAZone, direction: 'H' | 'V', lines: VectorLine[], images: VectorImage[]) {
     const gaps: { start: number, width: number }[] = [];
     const size = direction === 'V' ? zone.bbox.width : zone.bbox.height;
     const offset = direction === 'V' ? zone.bbox.x : zone.bbox.y;
     
-    // Chiếu các block lên trục
+    // Chiếu các block và hình ảnh lên trục
     const occupied = new Array(Math.ceil(size)).fill(false);
+    
+    // 1. Đánh dấu vùng bị chiếm bởi văn bản
     zone.blocks.forEach(b => {
       const start = Math.floor((direction === 'V' ? b.bbox.x : b.bbox.y) - offset);
       const end = Math.ceil((direction === 'V' ? b.bbox.x + b.bbox.width : b.bbox.y + b.bbox.height) - offset);
       for (let i = Math.max(0, start); i < Math.min(size, end); i++) occupied[i] = true;
+    });
+
+    // 2. Đánh dấu vùng bị chiếm bởi hình ảnh (Rất quan trọng để tránh cắt ngang qua ảnh/cột)
+    images.forEach(img => {
+      // Kiểm tra xem ảnh có nằm trong phạm vi của zone hiện tại không
+      const isIntersecting = direction === 'V'
+        ? (img.y < zone.bbox.y + zone.bbox.height && img.y + img.height > zone.bbox.y)
+        : (img.x < zone.bbox.x + zone.bbox.width && img.x + img.width > zone.bbox.x);
+      
+      if (isIntersecting) {
+        const start = Math.floor((direction === 'V' ? img.x : img.y) - offset);
+        const end = Math.ceil((direction === 'V' ? img.x + img.width : img.y + img.height) - offset);
+        for (let i = Math.max(0, start); i < Math.min(size, end); i++) occupied[i] = true;
+      }
     });
 
     // Tìm các khoảng trống
@@ -306,27 +514,32 @@ export class HLAService {
       } else {
         if (gapStart !== -1) {
           const gapWidth = i - gapStart;
-          // Giảm ngưỡng để phát hiện các máng xối hẹp hơn giữa các cột
-          if (gapWidth > (direction === 'V' ? 6 : 8)) { 
+          // Ngưỡng phát hiện gap: Dọc (cột) cần rộng hơn Ngang (dòng)
+          const threshold = direction === 'V' ? 5 : 3;
+          if (gapWidth > threshold) { 
             gaps.push({ start: gapStart + offset, width: gapWidth });
           }
           gapStart = -1;
         }
       }
     }
+    // Xử lý gap cuối cùng nếu có
+    if (gapStart !== -1 && occupied.length - gapStart > (direction === 'V' ? 5 : 3)) {
+      gaps.push({ start: gapStart + offset, width: occupied.length - gapStart });
+    }
 
-    // Tích hợp đường kẻ vector
+    // Tích hợp đường kẻ vector để ưu tiên điểm cắt
     lines.forEach(line => {
       if (line.type === direction) {
-        // Kiểm tra xem đường kẻ có nằm trong zone không
         const isInside = direction === 'V' 
-          ? (line.x1 >= zone.bbox.x && line.x1 <= zone.bbox.x + zone.bbox.width)
-          : (line.y1 >= zone.bbox.y && line.y1 <= zone.bbox.y + zone.bbox.height);
+          ? (line.x1 >= zone.bbox.x && line.x1 <= zone.bbox.x + zone.bbox.width && 
+             line.y1 < zone.bbox.y + zone.bbox.height && line.y2 > zone.bbox.y)
+          : (line.y1 >= zone.bbox.y && line.y1 <= zone.bbox.y + zone.bbox.height &&
+             line.x1 < zone.bbox.x + zone.bbox.width && line.x2 > zone.bbox.x);
         
         if (isInside) {
           const pos = direction === 'V' ? line.x1 : line.y1;
-          // Ưu tiên đường kẻ bằng cách tạo một gap ảo tại vị trí đường kẻ
-          gaps.push({ start: pos - 2, width: 4 });
+          gaps.push({ start: pos - 1, width: 2 });
         }
       }
     });
@@ -338,31 +551,22 @@ export class HLAService {
    * Phân loại các block dựa trên heuristics
    */
   private classifyBlocks(zones: HLAZone[], images: VectorImage[]) {
-    zones.forEach(zone => {
-      // Xác định lề trái của zone (cột)
-      const xStarts: Record<number, number> = {};
-      zone.blocks.forEach(b => {
-        const x = Math.round(b.bbox.x);
-        xStarts[x] = (xStarts[x] || 0) + 1;
-      });
-      
-      let columnLeft = zone.bbox.x;
-      let maxCount = 0;
-      for (const x in xStarts) {
-        if (xStarts[x] > maxCount) {
-          maxCount = xStarts[x];
-          columnLeft = parseInt(x);
-        }
-      }
+    const cueRegex = /\((xem trang|tiếp theo trang|tiếp từ trang|xem tiếp trang).*\)/i;
 
+    zones.forEach(zone => {
+      // Phân loại các block trước
       zone.blocks.forEach(block => {
         // 1. Nhận diện thụt lề (Indentation): Khớp với mô hình 4pt
-        if (block.bbox.x > columnLeft + 4 && block.fontSize <= this.baseFontSize + 1) {
+        if (block.bbox.x > zone.bbox.x + 4 && block.fontSize <= this.baseFontSize + 1) {
           block.isIndented = true;
         }
 
-        // 2. Phân loại theo font size: Title/Sapo > Base + 4pt
-        if (block.fontSize > this.baseFontSize + 4) {
+        // 2. Nhận diện PageCue
+        if (cueRegex.test(block.text)) {
+          block.label = 'PageCue';
+        } 
+        // 3. Phân loại theo font size: Title/Sapo > Base + 4pt
+        else if (block.fontSize > this.baseFontSize + 4) {
           block.label = 'Headline';
         } else if (block.fontSize > this.baseFontSize + 1) {
           // Chỉ gán nhãn Sapo nếu nó nằm gần một Headline trong cùng zone
@@ -377,27 +581,62 @@ export class HLAService {
         } else {
           block.label = 'Content';
         }
-
-        // 3. Magnetic Zone cho Caption (Gần ảnh): Khớp với mô hình 30pt dọc, 10pt ngang
-        const isNearImage = images.some(img => {
-          const distY = block.bbox.y - (img.y + img.height); // Khoảng cách dưới chân ảnh
-          const distX = Math.min(
-            Math.abs(block.bbox.x - img.x),
-            Math.abs((block.bbox.x + block.bbox.width) - (img.x + img.width))
-          );
-          return distY > -5 && distY < 30 && distX < 10;
-        });
-        if (isNearImage && block.fontSize <= this.baseFontSize) {
-          block.label = 'Caption';
-        }
-
-        // 4. Nhận diện Tác giả (Thường ở cuối bài, font nhỏ hoặc in nghiêng/đậm)
-        if (block.label === 'Content' && block.text.length < 50 && (block.isBold || block.fontSize < this.baseFontSize)) {
-          // Kiểm tra xem có nằm ở cuối zone không
-          const isAtBottom = block.bbox.y > zone.bbox.y + zone.bbox.height * 0.7;
-          if (isAtBottom) block.label = 'Author';
-        }
       });
+
+      // Phân loại zone dựa trên các block đã gán nhãn
+      const hasContent = zone.blocks.some(b => b.label === 'Content' || b.label === 'Headline' || b.label === 'Sapo' || b.label === 'PageCue');
+      const hasImage = images.some(img => 
+        img.x >= zone.bbox.x - 5 && img.y >= zone.bbox.y - 5 &&
+        img.x + img.width <= zone.bbox.x + zone.bbox.width + 5 &&
+        img.y + img.height <= zone.bbox.y + zone.bbox.height + 5
+      );
+      
+      zone.type = hasContent ? 'article' : (hasImage ? 'advertisement' : 'unknown');
     });
   }
+
+  /**
+   * Tính toán khoảng cách giữa các zone
+   */
+  private calculateDistance(z1: HLAZone, z2: HLAZone): number {
+    const dx = Math.max(0, z2.bbox.x - (z1.bbox.x + z1.bbox.width), z1.bbox.x - (z2.bbox.x + z2.bbox.width));
+    const dy = Math.max(0, z2.bbox.y - (z1.bbox.y + z1.bbox.height), z1.bbox.y - (z2.bbox.y + z2.bbox.height));
+    return Math.sqrt(dx * dx + dy * dy);
+  }
 }
+
+export const parseNewspaperLayoutHybrid = async (page: any): Promise<{ zones: HLAZone[], pageWidth: number, pageHeight: number, images: any[] }> => {
+  try {
+    const viewport = page.getViewport({ scale: 1.0 });
+    const pageWidth = viewport.width;
+    const pageHeight = viewport.height;
+
+    // 1. Extract Vector Data
+    const vectorData = await extractVectorData(page);
+
+    // 2. Extract Text Content
+    const textContent = await page.getTextContent();
+    const textItems = textContent.items.map((item: any) => {
+      const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
+      return {
+        text: item.str,
+        x: item.transform[4],
+        y: pageHeight - item.transform[5] - fontSize,
+        width: item.width,
+        height: fontSize,
+        fontSize,
+        fontName: item.fontName,
+        isBold: item.fontName.toLowerCase().includes('bold') || item.fontName.toLowerCase().includes('heavy')
+      };
+    });
+
+    // 3. HLA Analysis
+    const hlaService = new HLAService();
+    const zones = await hlaService.analyze(textItems, vectorData, pageWidth, pageHeight);
+
+    return { zones, pageWidth, pageHeight, images: vectorData.images };
+  } catch (error) {
+    console.error("Hybrid Layout analysis failed:", error);
+    throw error;
+  }
+};
