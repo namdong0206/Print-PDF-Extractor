@@ -413,12 +413,15 @@ export async function extractArticlesHybrid(
 ): Promise<Article[]> {
   console.log("--- [DEBUG] extractArticlesHybrid called ---");
   
-  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-  if (!apiKey) {
+  const apiKeysStr = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+  if (!apiKeysStr) {
     throw new Error("NEXT_PUBLIC_GEMINI_API_KEY is not set. Please configure it in your environment variables.");
   }
   
-  const ai = new GoogleGenAI({ apiKey });
+  const apiKeys = apiKeysStr.split(',').map(k => k.trim()).filter(k => k.length > 0);
+  if (apiKeys.length === 0) {
+    throw new Error("No valid API keys found in NEXT_PUBLIC_GEMINI_API_KEY.");
+  }
   
   // Làm sạch dữ liệu gửi đi: Loại bỏ header/footer của trang khác và chỉ giữ lại zone bài báo
   // Bao gồm cả zone 'unknown' để tránh bỏ sót nội dung
@@ -458,6 +461,7 @@ export async function extractArticlesHybrid(
   6. Nếu một đoạn văn trông giống Caption nhưng chứa nội dung dẫn dắt câu chuyện, hãy giữ lại trong Content.
   7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
   8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
+  9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
@@ -489,82 +493,99 @@ export async function extractArticlesHybrid(
   }
 
   for (const model of modelsToTry) {
-    try {
-      console.log(`Đang thử model: ${model}`);
-      const responseStream = await ai.models.generateContentStream({
-        model: model,
-        contents: contents,
-        config: {
-          temperature: 0,
-          responseMimeType: "application/json",
-          thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING },
-                author: { type: Type.STRING },
-                content: { 
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING }
+    for (const apiKey of apiKeys) {
+      const ai = new GoogleGenAI({ apiKey });
+      try {
+        console.log(`Đang thử model: ${model} với key: ${apiKey.substring(0, 8)}...`);
+        const responseStream = await ai.models.generateContentStream({
+          model: model,
+          contents: contents,
+          config: {
+            temperature: 0,
+            responseMimeType: "application/json",
+            thinkingConfig: { 
+              thinkingLevel: model === "gemini-3.1-pro-preview" ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL 
+            },
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  author: { type: Type.STRING },
+                  content: { 
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING }
+                  },
+                  seePage: { type: Type.STRING },
+                  imageCaption: { type: Type.STRING }
                 },
-                seePage: { type: Type.STRING },
-                imageCaption: { type: Type.STRING }
-              },
-              required: ["title", "content"]
-            }
+                required: ["title", "content"]
+              }
+            },
           },
-        },
-      });
+        });
 
-      let fullText = "";
-      const emittedIds = new Set<string>();
-      finalArticles = []; // Reset for each model attempt
+        let fullText = "";
+        const emittedIds = new Set<string>();
+        finalArticles = []; // Reset for each model attempt
 
-      for await (const chunk of responseStream) {
-        if (chunk.text) {
-          fullText += chunk.text;
-          
-          const parsedObjects = extractCompleteObjects(fullText);
-          
-          for (let i = 0; i < parsedObjects.length; i++) {
-            const art = parsedObjects[i];
-            const id = `${fileName}-${pageNumber}-${i}`;
+        for await (const chunk of responseStream) {
+          if (chunk.text) {
+            fullText += chunk.text;
             
-            if (!emittedIds.has(id)) {
-              emittedIds.add(id);
+            const parsedObjects = extractCompleteObjects(fullText);
+            
+            for (let i = 0; i < parsedObjects.length; i++) {
+              const art = parsedObjects[i];
+              const id = `${fileName}-${pageNumber}-${i}`;
               
-              const article: Article = {
-                id,
-                title: art.title || "Không có tiêu đề",
-                author: art.author || "",
-                content: (Array.isArray(art.content) ? art.content : [])
-                  .map((p: string) => p.trim())
-                  .filter((p: string) => p.length > 0),
-                imageCaption: art.imageCaption || "",
-                seePage: art.seePage || "",
-                pageNumbers: [pageNumber],
-                fileName: fileName,
-                articleRegionId: ""
-              };
-              
-              finalArticles.push(article);
-              if (onArticleParsed) {
-                onArticleParsed(article);
+              if (!emittedIds.has(id)) {
+                emittedIds.add(id);
+                
+                const article: Article = {
+                  id,
+                  title: art.title || "Không có tiêu đề",
+                  author: art.author || "",
+                  content: (Array.isArray(art.content) ? art.content : [])
+                    .map((p: string) => p.trim())
+                    .filter((p: string) => p.length > 0),
+                  imageCaption: art.imageCaption || "",
+                  seePage: art.seePage || "",
+                  pageNumbers: [pageNumber],
+                  fileName: fileName,
+                  articleRegionId: ""
+                };
+                
+                finalArticles.push(article);
+                if (onArticleParsed) {
+                  onArticleParsed(article);
+                }
               }
             }
           }
         }
+        
+        success = true;
+        break; // Thoát khỏi vòng lặp key nếu thành công
+      } catch (error: any) {
+        console.error(`Lỗi với model ${model} (Key: ${apiKey.substring(0, 8)}...):`, error);
+        lastError = error;
+        
+        const isQuotaError = error?.status === 429 || error?.status === "RESOURCE_EXHAUSTED" || error?.message?.includes("429") || error?.message?.includes("quota");
+        
+        if (isQuotaError) {
+          console.log(`Key ${apiKey.substring(0, 8)}... hết quota, chuyển sang key tiếp theo...`);
+          continue; // Thử key tiếp theo
+        } else {
+          console.log(`Lỗi không phải do quota, chuyển sang model tiếp theo...`);
+          break; // Thoát khỏi vòng lặp key, thử model tiếp theo
+        }
       }
-      
-      success = true;
-      break; // Thoát khỏi vòng lặp nếu thành công
-    } catch (error: any) {
-      console.error(`Lỗi với model ${model}:`, error);
-      lastError = error;
-      // Chuyển sang model tiếp theo nếu gặp lỗi (đặc biệt là lỗi quota 429)
-      console.log(`Chuyển sang model tiếp theo...`);
+    }
+    
+    if (success) {
+      break; // Thoát khỏi vòng lặp model nếu thành công
     }
   }
 

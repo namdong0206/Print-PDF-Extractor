@@ -47,6 +47,9 @@ export class HLAService {
     // 4. Chẻ dọc các block bị gộp ngang (Horizontal Merging) - Áp dụng logic từ Python
     zones = this.splitHorizontalMergedZones(zones);
 
+    // Nối Dropcap vào đoạn văn tương ứng
+    this.mergeDropcaps(zones);
+
     // 5. Phân loại và gán nhãn cho các block trong từng zone (Heuristics)
     this.classifyBlocks(zones, vectorData.images);
 
@@ -545,6 +548,70 @@ export class HLAService {
     });
 
     return gaps;
+  }
+
+  /**
+   * Phân loại các block dựa trên heuristics
+   */
+  private mergeDropcaps(zones: HLAZone[]) {
+    zones.forEach(zone => {
+      const dropcaps: HLABlock[] = [];
+      const others: HLABlock[] = [];
+
+      zone.blocks.forEach(block => {
+        const text = block.text.trim();
+        // Kiểm tra xem text có phải là 1-2 ký tự in hoa và font size lớn không
+        const isUppercase = text.length > 0 && text === text.toUpperCase() && /[A-ZĂÂĐÊÔƠƯÀẢÃÁẠẰẲẴẮẶẦẨẪẤẬÈẺẼÉẸỀỂỄẾỆÌỈĨÍỊÒỎÕÓỌỒỔỖỐỘỜỞỠỚỢÙỦŨÚỤỪỬỮỨỰỲỶỸÝỴ]/.test(text);
+        if (text.length <= 2 && isUppercase && block.fontSize > this.baseFontSize * 1.5) {
+          dropcaps.push(block);
+        } else {
+          others.push(block);
+        }
+      });
+
+      dropcaps.forEach(dropcap => {
+        let bestTarget: HLABlock | null = null;
+        let minDistance = Infinity;
+
+        for (const target of others) {
+          // Target phải nằm bên phải dropcap (hoặc trùng một chút)
+          const isToRight = target.bbox.x >= dropcap.bbox.x - 5;
+          // Khoảng cách theo trục X
+          const distanceX = target.bbox.x - (dropcap.bbox.x + dropcap.bbox.width);
+          // Target phải nằm ngang hàng với dropcap (y của target nằm trong khoảng y của dropcap)
+          const isAlongside = target.bbox.y >= dropcap.bbox.y - 10 && target.bbox.y <= dropcap.bbox.y + dropcap.bbox.height + 10;
+          
+          if (isToRight && distanceX < 40 && isAlongside) {
+            const dist = Math.max(0, distanceX) + Math.abs(target.bbox.y - dropcap.bbox.y);
+            if (dist < minDistance) {
+              minDistance = dist;
+              bestTarget = target;
+            }
+          }
+        }
+
+        if (bestTarget) {
+          bestTarget.text = dropcap.text.trim() + bestTarget.text;
+          // Cập nhật lại bbox của bestTarget để bao trọn dropcap
+          const newX = Math.min(bestTarget.bbox.x, dropcap.bbox.x);
+          const newY = Math.min(bestTarget.bbox.y, dropcap.bbox.y);
+          const newMaxX = Math.max(bestTarget.bbox.x + bestTarget.bbox.width, dropcap.bbox.x + dropcap.bbox.width);
+          const newMaxY = Math.max(bestTarget.bbox.y + bestTarget.bbox.height, dropcap.bbox.y + dropcap.bbox.height);
+          
+          bestTarget.bbox = {
+            x: newX,
+            y: newY,
+            width: newMaxX - newX,
+            height: newMaxY - newY
+          };
+        } else {
+          // Nếu không tìm thấy chỗ nối, trả lại dropcap vào danh sách
+          others.push(dropcap);
+        }
+      });
+
+      zone.blocks = others;
+    });
   }
 
   /**
