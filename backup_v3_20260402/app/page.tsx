@@ -32,7 +32,6 @@ import { parseNewspaperLayoutHybrid } from '@/lib/hlaService';
 import { ArticleRegion, BoundingBox } from '@/lib/types';
 import { segmentRegions, Region, groupBoxesByArticleRegion } from '@/lib/segmentationService';
 import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles, isSimilarTitle, QuotaExhaustedError } from '@/lib/geminiProcessor';
-import { clusterImages, matchImagesToArticles, cropImageFromCanvas } from '@/lib/imageService';
 import { processArticleContent } from '@/lib/textProcessor';
 import { HLAZone } from '@/lib/hlaService';
 import { exportArticleToWord, exportAllArticlesToZip } from '@/lib/wordExport';
@@ -716,7 +715,7 @@ function NewspaperLayoutContent() {
       
       // 1. Hybrid Layout Analysis (Heuristic)
       console.time("HLATime");
-      const { zones, images, pageWidth, pageHeight } = await parseNewspaperLayoutHybrid(page);
+      const { zones } = await parseNewspaperLayoutHybrid(page);
       console.timeEnd("HLATime");
       
       setHlaZones(zones);
@@ -725,29 +724,6 @@ function NewspaperLayoutContent() {
       // Use metadataPageNum if provided, otherwise docPageNum
       const finalPageNum = metadataPageNum ?? docPageNum;
       const extractedArticles = await extractArticlesHybrid(zones, finalPageNum, fileName, image, onArticleParsed);
-      
-      // 3. Image Matching and Cropping
-      try {
-        const clusteredImages = clusterImages(images);
-        const matchMap = matchImagesToArticles(extractedArticles, clusteredImages, zones);
-        
-        for (const article of extractedArticles) {
-          const matchedImages = matchMap.get(article.id);
-          if (matchedImages && matchedImages.length > 0) {
-            article.media = [];
-            for (const img of matchedImages) {
-              const base64 = await cropImageFromCanvas(image, img, pageWidth, pageHeight);
-              article.media.push({
-                type: 'image',
-                base64,
-                caption: article.imageCaption // Assign the article's caption to the image
-              });
-            }
-          }
-        }
-      } catch (imgError) {
-        console.error("Error matching images to articles:", imgError);
-      }
       
       return extractedArticles;
     } catch (error: any) {
@@ -958,15 +934,6 @@ function NewspaperLayoutContent() {
                 <div className="space-y-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-4">
-                      {selectedArticle.media && selectedArticle.media.length > 0 && (
-                        <div className="space-y-6 my-6">
-                          {selectedArticle.media.map((media, idx) => (
-                            <div key={idx} className="flex flex-col items-center gap-2">
-                              <img src={media.base64} alt={media.caption || 'Article image'} className="max-w-full h-auto rounded-lg shadow-sm border border-gray-200" />
-                            </div>
-                          ))}
-                        </div>
-                      )}
                       {selectedArticle.content.map((para, i) => (
                         <p key={i} className="text-gray-800 leading-relaxed text-lg">{para}</p>
                       ))}

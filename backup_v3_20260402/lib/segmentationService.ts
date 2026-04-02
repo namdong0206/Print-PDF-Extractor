@@ -202,11 +202,6 @@ export const groupTextBlocksIntoArticles = (textBlocks: TextBlock[], regions: Ar
       return a.y - b.y;
     });
     
-    const minX = Math.min(...groupedBoxes.map(b => b.x));
-    const minY = Math.min(...groupedBoxes.map(b => b.y));
-    const maxX = Math.max(...groupedBoxes.map(b => b.x + b.width));
-    const maxY = Math.max(...groupedBoxes.map(b => b.y + b.height));
-
     const article: Article = {
       id: `article_${regionId}`,
       articleRegionId: regionId,
@@ -215,9 +210,7 @@ export const groupTextBlocksIntoArticles = (textBlocks: TextBlock[], regions: Ar
       content: sortedBoxes.map(b => b.text || ""),
       imageCaption: "",
       seePage: "",
-      pageNumbers: [pageNumber],
-      container_box: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
-      warning_blocks: []
+      pageNumbers: [pageNumber]
     };
     articles.push(article);
   });

@@ -322,10 +322,10 @@ async function processImageWithOpenCV(pageImage: string, pageWidth: number, page
           const rect = cv.boundingRect(cnt);
           
           // Lọc nghiêm ngặt: 
-          // 1. Phải đủ dài (ít nhất 10% kích thước trang)
-          // 2. Phải mỏng (không quá 5px) để tránh bắt nhầm cạnh của khối hoặc ảnh
-          const minLength = isHorizontal ? src.cols * 0.1 : src.rows * 0.1;
-          const maxThickness = 5; 
+          // 1. Phải đủ dài (ít nhất 15% kích thước trang)
+          // 2. Phải mỏng (không quá 10px) để tránh bắt nhầm cạnh của khối hoặc ảnh
+          const minLength = isHorizontal ? src.cols * 0.15 : src.rows * 0.15;
+          const maxThickness = 10; 
           
           if (isHorizontal) {
             if (rect.width >= minLength && rect.height <= maxThickness) {
@@ -732,41 +732,6 @@ export const parseNewspaperLayout = async (page: any, pageImage?: string): Promi
     // 6. Classify Text Elements (Headline, Sapo, Caption, Author, ToContinue, ContinuePage)
     const boxIndex = new SpatialIndex(100);
     detectedBoxes.forEach(box => boxIndex.add(box));
-
-    // 7. Enforce Column Boundaries for Headlines
-    const separators = detectedBoxes.filter(b => b.label === 'Vertical Line');
-    const headlines = detectedBoxes.filter(b => b.label === 'Headline');
-    
-    headlines.forEach(headline => {
-      separators.forEach(sep => {
-        // Kiểm tra giao điểm
-        if (
-          headline.x < sep.x + sep.width &&
-          headline.x + headline.width > sep.x &&
-          headline.y < sep.y + sep.height &&
-          headline.y + headline.height > sep.y
-        ) {
-          // Cưỡng bức tách tiêu đề
-          const leftPart: BoundingBox = {
-            ...headline,
-            id: `${headline.id}-left`,
-            width: sep.x - headline.x,
-            text: headline.text?.substring(0, Math.floor(headline.text.length / 2)) || ""
-          };
-          const rightPart: BoundingBox = {
-            ...headline,
-            id: `${headline.id}-right`,
-            x: sep.x + sep.width,
-            width: (headline.x + headline.width) - (sep.x + sep.width),
-            text: headline.text?.substring(Math.floor(headline.text.length / 2)) || ""
-          };
-          
-          // Loại bỏ tiêu đề cũ và thêm 2 tiêu đề mới
-          detectedBoxes = detectedBoxes.filter(b => b.id !== headline.id);
-          detectedBoxes.push(leftPart, rightPart);
-        }
-      });
-    });
 
     const looseTextItems = textItems.filter((item: any) => {
       const nearbyBoxes = boxIndex.query(item.x - 2, item.y - 2, item.width + 4, item.height + 4);
