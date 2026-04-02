@@ -14,6 +14,15 @@ export interface TextBlock {
   ind?: boolean; // is_indented
 }
 
+export interface MediaItem {
+  base64: string;
+  caption: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface Article {
   id: string;
   articleRegionId: string;
@@ -24,8 +33,7 @@ export interface Article {
   seePage: string;
   pageNumbers: number[];
   fileName?: string;
-  container_box: { x: number; y: number; width: number; height: number };
-  warning_blocks?: TextBlock[];
+  media?: MediaItem[];
 }
 
 export class QuotaExhaustedError extends Error {
@@ -502,32 +510,12 @@ export async function extractArticlesHybrid(
   7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
   8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
   9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
-  10. VỚI MỖI BÀI BÁO, HÃY TRẢ VỀ TỌA ĐỘ CỦA 'container_box' (hình chữ nhật bao trùm toàn bộ bài báo).
-  11. VỚI CÁC KHỐI VĂN BẢN KHÔNG THUỘC BÀI BÁO NÀO (unused_blocks), HÃY TRẢ VỀ TỌA ĐỘ 'x, y, width, height'.
-  
-  CẤU TRÚC JSON TRẢ VỀ:
-  {
-    "articles": [
-      {
-        "title": "...",
-        "author": "...",
-        "content": ["..."],
-        "seePage": "...",
-        "imageCaption": "...",
-        "container_box": {"x": 10, "y": 10, "width": 500, "height": 800}
-      }
-    ],
-    "unused_blocks": [
-      {"block_id": "...", "x": 50, "y": 100, "width": 200, "height": 50, "content": "..."}
-    ]
-  }
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
   `;
 
-  const timerLabel = `GeminiAPITime-${fileName}-${pageNumber}`;
-  console.time(timerLabel);
+  console.time("GeminiAPITime");
   
   const modelsToTry = [
     "gemini-3.1-pro-preview",
@@ -567,88 +555,65 @@ export async function extractArticlesHybrid(
               thinkingLevel: model === "gemini-3.1-pro-preview" ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL 
             },
             responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                articles: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      author: { type: Type.STRING },
-                      content: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      seePage: { type: Type.STRING },
-                      imageCaption: { type: Type.STRING },
-                      container_box: {
-                        type: Type.OBJECT,
-                        properties: {
-                          x: { type: Type.NUMBER },
-                          y: { type: Type.NUMBER },
-                          width: { type: Type.NUMBER },
-                          height: { type: Type.NUMBER }
-                        }
-                      }
-                    },
-                    required: ["title", "content", "container_box"]
-                  }
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  author: { type: Type.STRING },
+                  content: { 
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING }
+                  },
+                  seePage: { type: Type.STRING },
+                  imageCaption: { type: Type.STRING }
                 },
-                unused_blocks: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      block_id: { type: Type.STRING },
-                      x: { type: Type.NUMBER },
-                      y: { type: Type.NUMBER },
-                      width: { type: Type.NUMBER },
-                      height: { type: Type.NUMBER },
-                      content: { type: Type.STRING }
-                    }
-                  }
-                }
-              },
-              required: ["articles", "unused_blocks"]
+                required: ["title", "content"]
+              }
             },
           },
         });
 
         let fullText = "";
-        let finalUnusedBlocks: any[] = [];
+        const emittedIds = new Set<string>();
+        finalArticles = []; // Reset for each model attempt
 
         for await (const chunk of responseStream) {
           if (chunk.text) {
             fullText += chunk.text;
             
-            // Parse full JSON response
-            try {
-              const parsed = JSON.parse(fullText);
-              if (parsed.articles) {
-                finalArticles = parsed.articles.map((art: any, i: number) => ({
-                  id: `${fileName}-${pageNumber}-${i}`,
-                  title: art.title || "Không có tiêu đề",
-                  author: art.author || "",
-                  content: art.content || [],
-                  seePage: art.seePage || "",
-                  imageCaption: art.imageCaption || "",
+            const parsedObjects = extractCompleteObjects(fullText);
+            
+            for (let i = 0; i < parsedObjects.length; i++) {
+              const art = parsedObjects[i];
+              const id = `${fileName}-${pageNumber}-${i}`;
+              
+              if (!emittedIds.has(id)) {
+                emittedIds.add(id);
+                
+                const article: Article = {
+                  id,
+                  title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
+                  author: art.author && art.author !== 'null' ? art.author : "",
+                  content: (Array.isArray(art.content) ? art.content : [])
+                    .map((p: string) => p.trim())
+                    .filter((p: string) => p.length > 0 && p !== 'null'),
+                  imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
+                  seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
                   pageNumbers: [pageNumber],
                   fileName: fileName,
-                  articleRegionId: "",
-                  container_box: art.container_box,
-                  warning_blocks: []
-                }));
+                  articleRegionId: ""
+                };
+                
+                finalArticles.push(article);
+                if (onArticleParsed) {
+                  onArticleParsed(article);
+                }
               }
-              if (parsed.unused_blocks) {
-                finalUnusedBlocks = parsed.unused_blocks;
-              }
-            } catch (e) {
-              // JSON might be incomplete, ignore
             }
           }
         }
         
-        // Implement assignment logic here
-        processLayout(finalArticles, finalUnusedBlocks);
-
         success = true;
         break; // Thoát khỏi vòng lặp model nếu thành công
       } catch (error: any) {
@@ -672,59 +637,11 @@ export async function extractArticlesHybrid(
     }
   }
 
-  console.timeEnd(timerLabel);
+  console.timeEnd("GeminiAPITime");
 
   if (!success) {
     throw new QuotaExhaustedError("Thành thật xin lỗi! Hiện đã hết quota Gemini để xử lý. Xin chờ đến hôm sau mình làm tiếp nhé!", finalArticles);
   }
 
   return finalArticles;
-}
-
-function isCenterInside(block: any, box: { x: number; y: number; width: number; height: number }) {
-  let centerX = block.x + block.width / 2;
-  let centerY = block.y + block.height / 2;
-  return (centerX >= box.x && centerX <= (box.x + box.width) &&
-          centerY >= box.y && centerY <= (box.y + box.height));
-}
-
-function processLayout(articles: Article[], unusedBlocks: any[]) {
-  const MIN_WIDTH_RATIO = 0.6;
-  const MAX_WIDTH_RATIO = 1.2;
-
-  for (const block of unusedBlocks) {
-    let bestMatch: Article | null = null;
-    let minArea = Infinity;
-
-    for (const article of articles) {
-      if (isCenterInside(block, article.container_box)) {
-        let area = article.container_box.width * article.container_box.height;
-        if (area < minArea) {
-          minArea = area;
-          bestMatch = article;
-        }
-      }
-    }
-
-    if (bestMatch) {
-      let ratio = block.width / bestMatch.container_box.width;
-      
-      if (ratio >= MIN_WIDTH_RATIO && ratio <= MAX_WIDTH_RATIO) {
-        bestMatch.content.push(block.content);
-      } else {
-        const warning = `[CẢNH BÁO: Khối nội dung này được gắn tự động do chênh lệch kích thước so với cột báo gốc]\n${block.content}`;
-        if (!bestMatch.warning_blocks) bestMatch.warning_blocks = [];
-        bestMatch.warning_blocks.push({
-          id: parseInt(block.block_id),
-          t: warning,
-          fs: 10,
-          b: false,
-          x: block.x,
-          y: block.y,
-          w: block.width
-        });
-        bestMatch.content.push(warning);
-      }
-    }
-  }
 }
