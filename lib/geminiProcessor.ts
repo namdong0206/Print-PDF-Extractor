@@ -422,14 +422,40 @@ export async function extractArticlesHybrid(
 ): Promise<Article[]> {
   console.log("--- [DEBUG] extractArticlesHybrid called ---");
   
-  const apiKeysStr = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-  if (!apiKeysStr) {
-    throw new Error("NEXT_PUBLIC_GEMINI_API_KEY is not set. Please configure it in your environment variables.");
+  const defaultApiKeyStr = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
+  const customApiKeysStr = process.env.NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS || "";
+  
+  let apiKeys: string[] = [];
+  
+  // Thêm các key custom của người dùng vào trước
+  if (customApiKeysStr) {
+    const customKeys = customApiKeysStr.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    apiKeys = [...apiKeys, ...customKeys];
   }
   
-  const apiKeys = apiKeysStr.split(',').map(k => k.trim()).filter(k => k.length > 0);
+  // Thêm key mặc định của hệ thống vào sau cùng
+  if (defaultApiKeyStr) {
+    const defaultKeys = defaultApiKeyStr.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    // Lọc bỏ những key đã có trong customKeys để tránh trùng lặp
+    const uniqueDefaultKeys = defaultKeys.filter(k => !apiKeys.includes(k));
+    apiKeys = [...apiKeys, ...uniqueDefaultKeys];
+  }
+
+  // Đẩy các key mặc định của AI Studio (thường bắt đầu bằng AIzaSyD8) xuống cuối danh sách
+  // để ưu tiên sử dụng key của người dùng trước. Lưu ý: Mọi key Google đều bắt đầu bằng AIzaSy
+  // nên ta chỉ check chuỗi đặc trưng của key mặc định.
+  apiKeys.sort((a, b) => {
+    const isDefaultA = a.startsWith('AIzaSyD8');
+    const isDefaultB = b.startsWith('AIzaSyD8');
+    
+    // Nếu cả 2 đều là default hoặc cả 2 đều không phải default thì giữ nguyên thứ tự
+    if (isDefaultA === isDefaultB) return 0;
+    // Nếu A là default thì đẩy A xuống dưới (trả về 1)
+    return isDefaultA ? 1 : -1;
+  });
+
   if (apiKeys.length === 0) {
-    throw new Error("No valid API keys found in NEXT_PUBLIC_GEMINI_API_KEY.");
+    throw new Error("No valid API keys found. Please configure NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS or NEXT_PUBLIC_GEMINI_API_KEY.");
   }
   
   // Làm sạch dữ liệu gửi đi: Loại bỏ header/footer của trang khác và chỉ giữ lại zone bài báo
