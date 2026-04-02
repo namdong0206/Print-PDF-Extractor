@@ -501,8 +501,8 @@ export async function extractArticlesHybrid(
     contents.push({ parts: [{ text: prompt }] });
   }
 
-  for (const model of modelsToTry) {
-    for (const apiKey of apiKeys) {
+  for (const apiKey of apiKeys) {
+    for (const model of modelsToTry) {
       const ai = new GoogleGenAI({ apiKey });
       try {
         console.log(`Đang thử model: ${model} với key: ${apiKey.substring(0, 8)}...`);
@@ -576,7 +576,7 @@ export async function extractArticlesHybrid(
         }
         
         success = true;
-        break; // Thoát khỏi vòng lặp key nếu thành công
+        break; // Thoát khỏi vòng lặp model nếu thành công
       } catch (error: any) {
         console.error(`Lỗi với model ${model} (Key: ${apiKey.substring(0, 8)}...):`, error);
         lastError = error;
@@ -584,17 +584,17 @@ export async function extractArticlesHybrid(
         const isQuotaError = error?.status === 429 || error?.status === "RESOURCE_EXHAUSTED" || error?.message?.includes("429") || error?.message?.includes("quota");
         
         if (isQuotaError) {
-          console.log(`Key ${apiKey.substring(0, 8)}... hết quota, chuyển sang key tiếp theo...`);
-          continue; // Thử key tiếp theo
+          console.log(`Model ${model} với key ${apiKey.substring(0, 8)}... hết quota, chuyển sang model tiếp theo...`);
+          continue; // Thử model tiếp theo
         } else {
           console.log(`Lỗi không phải do quota, chuyển sang model tiếp theo...`);
-          break; // Thoát khỏi vòng lặp key, thử model tiếp theo
+          continue; // Thử model tiếp theo
         }
       }
     }
     
     if (success) {
-      break; // Thoát khỏi vòng lặp model nếu thành công
+      break; // Thoát khỏi vòng lặp key nếu thành công
     }
   }
 
