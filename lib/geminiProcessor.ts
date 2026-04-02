@@ -621,7 +621,23 @@ export async function extractArticlesHybrid(
         console.error(`Lỗi với model ${model} (Key: ${apiKey.substring(0, 8)}...):`, error);
         lastError = error;
         
-        const isQuotaError = error?.status === 429 || error?.status === "RESOURCE_EXHAUSTED" || error?.message?.includes("429") || error?.message?.includes("quota");
+        // Robust error parsing
+        let errorMessage = "";
+        let errorStatus: any = null;
+        
+        if (typeof error === 'string') {
+            errorMessage = error;
+        } else if (error && typeof error === 'object') {
+            if (error.error && typeof error.error === 'object') {
+                errorMessage = error.error.message || "";
+                errorStatus = error.error.status || error.error.code;
+            } else {
+                errorMessage = error.message || "";
+                errorStatus = error.status || error.code;
+            }
+        }
+        
+        const isQuotaError = errorStatus === 429 || errorStatus === "RESOURCE_EXHAUSTED" || errorMessage.includes("429") || errorMessage.includes("quota");
         
         if (isQuotaError) {
           console.log(`Model ${model} với key ${apiKey.substring(0, 8)}... hết quota, chuyển sang model tiếp theo...`);
