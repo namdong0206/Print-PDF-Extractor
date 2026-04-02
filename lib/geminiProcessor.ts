@@ -35,6 +35,8 @@ export interface Article {
   pageNumbers: number[];
   fileName?: string;
   media?: MediaItem[];
+  container_box?: { x: number; y: number; width: number; height: number };
+  warning_blocks?: any[];
 }
 
 export class QuotaExhaustedError extends Error {
@@ -603,7 +605,9 @@ export async function extractArticlesHybrid(
                   seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
                   pageNumbers: [pageNumber],
                   fileName: fileName,
-                  articleRegionId: ""
+                  articleRegionId: "",
+                  container_box: art.container_box || { x: 0, y: 0, width: 0, height: 0 },
+                  warning_blocks: art.warning_blocks || []
                 };
                 
                 finalArticles.push(article);

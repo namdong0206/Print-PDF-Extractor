@@ -284,7 +284,7 @@ function NewspaperLayoutContent() {
     // Load pdfjs only on client
     const loadPdfJs = async () => {
       try {
-        const pdfjs = await import('pdfjs-dist/build/pdf.mjs');
+        const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
         
         if (pdfjs) {
           pdfjsRef.current = pdfjs;
