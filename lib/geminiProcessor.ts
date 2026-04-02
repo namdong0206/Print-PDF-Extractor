@@ -458,6 +458,9 @@ export async function extractArticlesHybrid(
     throw new Error("No valid API keys found. Please configure NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS or NEXT_PUBLIC_GEMINI_API_KEY.");
   }
   
+  // Log danh sách key (đã che) để debug
+  console.log(`[DEBUG] Đã nạp ${apiKeys.length} API keys:`, apiKeys.map(k => k.substring(0, 8) + '...'));
+
   // Làm sạch dữ liệu gửi đi: Loại bỏ header/footer của trang khác và chỉ giữ lại zone bài báo
   // Bao gồm cả zone 'unknown' để tránh bỏ sót nội dung
   const cleanedZones = zones
