@@ -46,7 +46,7 @@ export const generateWordDocument = async (article: Article): Promise<Blob> => {
   );
 
   // Author
-  if (article.author) {
+  if (article.author && article.author !== 'null') {
     children.push(
       new Paragraph({
         children: [
@@ -71,7 +71,7 @@ export const generateWordDocument = async (article: Article): Promise<Blob> => {
   });
 
   // Image Caption
-  if (article.imageCaption) {
+  if (article.imageCaption && article.imageCaption !== 'null') {
     children.push(
       new Paragraph({
         children: [

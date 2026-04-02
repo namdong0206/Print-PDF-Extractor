@@ -31,7 +31,7 @@ import { parseNewspaperLayout } from '@/lib/layoutService';
 import { parseNewspaperLayoutHybrid } from '@/lib/hlaService';
 import { ArticleRegion, BoundingBox } from '@/lib/types';
 import { segmentRegions, Region, groupBoxesByArticleRegion } from '@/lib/segmentationService';
-import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles, isSimilarTitle } from '@/lib/geminiProcessor';
+import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles, isSimilarTitle, QuotaExhaustedError } from '@/lib/geminiProcessor';
 import { processArticleContent } from '@/lib/textProcessor';
 import { HLAZone } from '@/lib/hlaService';
 import { exportArticleToWord, exportAllArticlesToZip } from '@/lib/wordExport';
@@ -206,6 +206,32 @@ function NewspaperLayoutContent() {
   const [pageSize, setPageSize] = useState({ width: 600, height: 800 });
   const [processingTime, setProcessingTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const playTingSound = () => {
+    try {
+      const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContext) return;
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1200, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.5);
+      
+      gain.gain.setValueAtTime(1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+      
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+    } catch (e) {
+      console.error("Audio play failed", e);
+    }
+  };
   
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -498,6 +524,7 @@ function NewspaperLayoutContent() {
   const processInParallel = async (indices: number[], concurrency: number = 2) => {
     const results: Article[] = [];
     let currentIndex = 0;
+    let quotaError: any = null;
     
     const handleArticleParsed = (article: Article) => {
       setArticles(prev => {
@@ -514,7 +541,7 @@ function NewspaperLayoutContent() {
     };
 
     const processNext = async (): Promise<void> => {
-      if (currentIndex >= indices.length) return;
+      if (currentIndex >= indices.length || quotaError) return;
       
       const index = indices[currentIndex++];
       setProcessingFileIndices(prev => new Set(prev).add(index));
@@ -553,8 +580,11 @@ function NewspaperLayoutContent() {
         }
       } catch (error: any) {
         console.error(`Error processing file ${file.name}:`, error);
-        if (error?.message?.includes('Thành thật xin lỗi')) {
-          throw error; // Ném lỗi lên trên để dừng toàn bộ quá trình
+        if (error instanceof QuotaExhaustedError || error?.message?.includes('Thành thật xin lỗi')) {
+          quotaError = error;
+          if (error.partialArticles) {
+            results.push(...error.partialArticles);
+          }
         }
       } finally {
         setProcessingFileIndices(prev => {
@@ -563,7 +593,9 @@ function NewspaperLayoutContent() {
           return next;
         });
         setCompletedFileIndices(prev => new Set(prev).add(index));
-        await processNext();
+        if (!quotaError) {
+          await processNext();
+        }
       }
     };
 
@@ -573,6 +605,10 @@ function NewspaperLayoutContent() {
     }
     
     await Promise.all(workers);
+    if (quotaError) {
+      quotaError.partialArticles = results; // Attach all results gathered so far
+      throw quotaError;
+    }
     return results;
   };
 
@@ -598,8 +634,19 @@ function NewspaperLayoutContent() {
       
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
+      playTingSound();
+      setToastMessage("Toàn bộ nội dung đã được trích xuất xong");
+      setTimeout(() => setToastMessage(null), 3000);
     } catch (error: any) {
-      if (error?.message?.includes('Thành thật xin lỗi')) {
+      if (error instanceof QuotaExhaustedError || error?.message?.includes('Thành thật xin lỗi')) {
+        // Vẫn hiển thị những bài báo đã trích xuất được
+        const partialArticles = error.partialArticles || [];
+        if (partialArticles.length > 0) {
+          const merged = mergeArticles(partialArticles);
+          setArticles(merged);
+          localStorage.setItem('extracted_articles', JSON.stringify(merged));
+          setViewMode('articles');
+        }
         alert(error.message);
       } else {
         console.error("Lỗi trong quá trình trích xuất:", error);
@@ -630,8 +677,19 @@ function NewspaperLayoutContent() {
       
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
+      playTingSound();
+      setToastMessage("Toàn bộ nội dung đã được trích xuất xong");
+      setTimeout(() => setToastMessage(null), 3000);
     } catch (error: any) {
-      if (error?.message?.includes('Thành thật xin lỗi')) {
+      if (error instanceof QuotaExhaustedError || error?.message?.includes('Thành thật xin lỗi')) {
+        // Vẫn hiển thị những bài báo đã trích xuất được
+        const partialArticles = error.partialArticles || [];
+        if (partialArticles.length > 0) {
+          const merged = mergeArticles(partialArticles);
+          setArticles(merged);
+          localStorage.setItem('extracted_articles', JSON.stringify(merged));
+          setViewMode('articles');
+        }
         alert(error.message);
       } else {
         console.error("Lỗi trong quá trình trích xuất:", error);
@@ -670,7 +728,7 @@ function NewspaperLayoutContent() {
       return extractedArticles;
     } catch (error: any) {
       console.error("Error extracting articles:", error);
-      if (error?.message?.includes('Thành thật xin lỗi')) {
+      if (error instanceof QuotaExhaustedError || error?.message?.includes('Thành thật xin lỗi')) {
         throw error;
       }
       return [];
@@ -700,6 +758,12 @@ function NewspaperLayoutContent() {
 
   return (
     <div className="min-h-screen bg-[#FDFCFB] text-[#1A1A1A] font-sans">
+      {toastMessage && (
+        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-green-600 text-white px-6 py-3 rounded-full shadow-lg font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
+          <CheckCircle2 size={20} />
+          {toastMessage}
+        </div>
+      )}
       <header className="h-16 border-b border-gray-200 px-6 flex items-center justify-between bg-white sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-[#F27D26] rounded-lg flex items-center justify-center text-white">
@@ -861,7 +925,7 @@ function NewspaperLayoutContent() {
                     <CopyButton text={selectedArticle.title} label="Tiêu đề" />
                   </div>
                 </div>
-                {selectedArticle.author && (
+                {selectedArticle.author && selectedArticle.author !== 'null' && (
                   <div className="flex items-center justify-between gap-4">
                     <p className="text-sm font-bold text-gray-700">Tác giả: {selectedArticle.author}</p>
                     <CopyButton text={selectedArticle.author} label="Tác giả" />
@@ -877,7 +941,7 @@ function NewspaperLayoutContent() {
                     <CopyButton text={selectedArticle.content.join('\n\n')} label="Nội dung" />
                   </div>
                 </div>
-                {selectedArticle.imageCaption && (
+                {selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' && (
                   <div className="flex items-start justify-between gap-4">
                     <div className="text-sm text-gray-600 italic">Chú thích ảnh: {selectedArticle.imageCaption}</div>
                     <CopyButton text={selectedArticle.imageCaption} label="Chú thích ảnh" />
@@ -888,9 +952,9 @@ function NewspaperLayoutContent() {
                     variant="square"
                     text={[
                       selectedArticle.title,
-                      selectedArticle.author ? `Tác giả: ${selectedArticle.author}` : '',
+                      selectedArticle.author && selectedArticle.author !== 'null' ? `Tác giả: ${selectedArticle.author}` : '',
                       ...selectedArticle.content,
-                      selectedArticle.imageCaption ? `Chú thích ảnh: ${selectedArticle.imageCaption}` : ''
+                      selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' ? `Chú thích ảnh: ${selectedArticle.imageCaption}` : ''
                     ].filter(Boolean).join('\n\n')} 
                     label="toàn bộ bài báo" 
                   />

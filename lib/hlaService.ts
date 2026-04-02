@@ -560,9 +560,12 @@ export class HLAService {
 
       zone.blocks.forEach(block => {
         const text = block.text.trim();
-        // Kiểm tra xem text có phải là 1-2 ký tự in hoa và font size lớn không
+        // Kiểm tra xem text có phải là 1-2 ký tự in hoa và font size lớn hoặc chiều cao lớn không
         const isUppercase = text.length > 0 && text === text.toUpperCase() && /[A-ZĂÂĐÊÔƠƯÀẢÃÁẠẰẲẴẮẶẦẨẪẤẬÈẺẼÉẸỀỂỄẾỆÌỈĨÍỊÒỎÕÓỌỒỔỖỐỘỜỞỠỚỢÙỦŨÚỤỪỬỮỨỰỲỶỸÝỴ]/.test(text);
-        if (text.length <= 2 && isUppercase && block.fontSize > this.baseFontSize * 1.5) {
+        const isLargeFont = block.fontSize > this.baseFontSize * 1.5;
+        const isLargeHeight = block.bbox.height > this.baseFontSize * 2.0;
+        
+        if (text.length <= 2 && isUppercase && (isLargeFont || isLargeHeight)) {
           dropcaps.push(block);
         } else {
           others.push(block);
@@ -574,14 +577,18 @@ export class HLAService {
         let minDistance = Infinity;
 
         for (const target of others) {
-          // Target phải nằm bên phải dropcap (hoặc trùng một chút)
-          const isToRight = target.bbox.x >= dropcap.bbox.x - 5;
+          // Target phải nằm bên phải dropcap (hoặc trùng một chút, cho phép lẹm vào 20px)
+          const isToRight = target.bbox.x >= dropcap.bbox.x - 20;
           // Khoảng cách theo trục X
           const distanceX = target.bbox.x - (dropcap.bbox.x + dropcap.bbox.width);
-          // Target phải nằm ngang hàng với dropcap (y của target nằm trong khoảng y của dropcap)
-          const isAlongside = target.bbox.y >= dropcap.bbox.y - 10 && target.bbox.y <= dropcap.bbox.y + dropcap.bbox.height + 10;
+          // Target phải nằm ngang hàng với dropcap (y của target nằm trong khoảng y của dropcap, cho phép sai số 20px)
+          const isAlongside = target.bbox.y >= dropcap.bbox.y - 20 && target.bbox.y <= dropcap.bbox.y + dropcap.bbox.height + 20;
           
-          if (isToRight && distanceX < 40 && isAlongside) {
+          // Quy tắc bổ sung: Chiều cao của ký tự dropcap thường bằng tổng chiều cao 2 đến 4 dòng đầu tiên trong đoạn văn bản đó
+          // (Khoảng 1.5 đến 8.0 lần fontSize của đoạn văn bản đích để bao quát các trường hợp dropcap 3-4 dòng)
+          const isHeightMatch = dropcap.bbox.height >= target.fontSize * 1.5 && dropcap.bbox.height <= target.fontSize * 8.0;
+          
+          if (isToRight && distanceX < 60 && isAlongside && isHeightMatch) {
             const dist = Math.max(0, distanceX) + Math.abs(target.bbox.y - dropcap.bbox.y);
             if (dist < minDistance) {
               minDistance = dist;

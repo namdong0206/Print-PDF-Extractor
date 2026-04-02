@@ -26,6 +26,15 @@ export interface Article {
   fileName?: string;
 }
 
+export class QuotaExhaustedError extends Error {
+  public partialArticles: Article[];
+  constructor(message: string, partialArticles: Article[]) {
+    super(message);
+    this.name = "QuotaExhaustedError";
+    this.partialArticles = partialArticles;
+  }
+}
+
 export const normalize = (s: string) => s.toLowerCase()
   .replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "")
   .replace(/\s+/g, " ")
@@ -545,13 +554,13 @@ export async function extractArticlesHybrid(
                 
                 const article: Article = {
                   id,
-                  title: art.title || "Không có tiêu đề",
-                  author: art.author || "",
+                  title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
+                  author: art.author && art.author !== 'null' ? art.author : "",
                   content: (Array.isArray(art.content) ? art.content : [])
                     .map((p: string) => p.trim())
-                    .filter((p: string) => p.length > 0),
-                  imageCaption: art.imageCaption || "",
-                  seePage: art.seePage || "",
+                    .filter((p: string) => p.length > 0 && p !== 'null'),
+                  imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
+                  seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
                   pageNumbers: [pageNumber],
                   fileName: fileName,
                   articleRegionId: ""
@@ -592,7 +601,7 @@ export async function extractArticlesHybrid(
   console.timeEnd("GeminiAPITime");
 
   if (!success) {
-    throw new Error("Thành thật xin lỗi! Hiện đã hết quota Gemini để xử lý. Xin chờ đến hôm sau mình làm tiếp nhé!");
+    throw new QuotaExhaustedError("Thành thật xin lỗi! Hiện đã hết quota Gemini để xử lý. Xin chờ đến hôm sau mình làm tiếp nhé!", finalArticles);
   }
 
   return finalArticles;
