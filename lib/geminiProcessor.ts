@@ -14,16 +14,6 @@ export interface TextBlock {
   ind?: boolean; // is_indented
 }
 
-export interface MediaItem {
-  type?: string;
-  base64: string;
-  caption: string;
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-}
-
 export interface Article {
   id: string;
   articleRegionId: string;
@@ -34,9 +24,6 @@ export interface Article {
   seePage: string;
   pageNumbers: number[];
   fileName?: string;
-  media?: MediaItem[];
-  container_box?: { x: number; y: number; width: number; height: number };
-  warning_blocks?: any[];
 }
 
 export class QuotaExhaustedError extends Error {
@@ -423,17 +410,16 @@ function extractCompleteObjects(jsonString: string): any[] {
   return objects;
 }
 
-/**
- * Bước 2 & 3: Gọi API Gemini để xử lý bài báo (Hybrid: HLA Zones + Text)
- */
-export async function extractArticlesHybrid(
-  zones: HLAZone[],
-  pageNumber: number,
-  fileName: string,
-  base64Image?: string,
-  onArticleParsed?: (article: Article) => void
-): Promise<Article[]> {
-  console.log("--- [DEBUG] extractArticlesHybrid called ---");
+// State to persist across calls in the same session
+const sessionState = {
+  apiKeys: [] as string[],
+  currentKeyIndex: 0,
+  currentModelIndex: 0,
+  isInitialized: false
+};
+
+function initializeSession() {
+  if (sessionState.isInitialized) return;
   
   const defaultApiKeyStr = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
   const customApiKeysStr = process.env.NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS || "";
@@ -455,25 +441,37 @@ export async function extractArticlesHybrid(
   }
 
   // Đẩy các key mặc định của AI Studio (thường bắt đầu bằng AIzaSyD8) xuống cuối danh sách
-  // để ưu tiên sử dụng key của người dùng trước. Lưu ý: Mọi key Google đều bắt đầu bằng AIzaSy
-  // nên ta chỉ check chuỗi đặc trưng của key mặc định.
   apiKeys.sort((a, b) => {
     const isDefaultA = a.startsWith('AIzaSyD8');
     const isDefaultB = b.startsWith('AIzaSyD8');
-    
-    // Nếu cả 2 đều là default hoặc cả 2 đều không phải default thì giữ nguyên thứ tự
     if (isDefaultA === isDefaultB) return 0;
-    // Nếu A là default thì đẩy A xuống dưới (trả về 1)
     return isDefaultA ? 1 : -1;
   });
+
+  sessionState.apiKeys = apiKeys;
+  sessionState.isInitialized = true;
+  console.log(`[DEBUG] Session initialized with ${apiKeys.length} keys:`, apiKeys.map(k => k.substring(0, 8) + '...'));
+}
+
+/**
+ * Bước 2 & 3: Gọi API Gemini để xử lý bài báo (Hybrid: HLA Zones + Text)
+ */
+export async function extractArticlesHybrid(
+  zones: HLAZone[],
+  pageNumber: number,
+  fileName: string,
+  base64Image?: string,
+  onArticleParsed?: (article: Article) => void
+): Promise<Article[]> {
+  console.log("--- [DEBUG] extractArticlesHybrid called ---");
+  
+  initializeSession();
+  const { apiKeys } = sessionState;
 
   if (apiKeys.length === 0) {
     throw new Error("No valid API keys found. Please configure NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS or NEXT_PUBLIC_GEMINI_API_KEY.");
   }
   
-  // Log danh sách key (đã che) để debug
-  console.log(`[DEBUG] Đã nạp ${apiKeys.length} API keys:`, apiKeys.map(k => k.substring(0, 8) + '...'));
-
   // Làm sạch dữ liệu gửi đi: Loại bỏ header/footer của trang khác và chỉ giữ lại zone bài báo
   // Bao gồm cả zone 'unknown' để tránh bỏ sót nội dung
   const cleanedZones = zones
@@ -498,21 +496,23 @@ export async function extractArticlesHybrid(
   }));
 
   const jsonPayload = JSON.stringify(optimizedZones);
-  console.log(`Kích thước gửi: ${(new Blob([jsonPayload]).size / 1024).toFixed(2)} KB (Zones: ${cleanedZones.length})`);
+  console.log(`[DEBUG] JSON Payload size: ${(new Blob([jsonPayload]).size / 1024).toFixed(2)} KB (Zones: ${cleanedZones.length})`);
+  // console.log(`[DEBUG] JSON Payload:`, jsonPayload);
 
   const prompt = `
   Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất và sắp xếp lại nội dung thành các bài báo hoàn chỉnh từ JSON zones.
   
   QUY TẮC QUAN TRỌNG:
   1. KHÔNG tóm tắt, KHÔNG sửa nội dung, KHÔNG bỏ sót bất kỳ đoạn văn nào thuộc về bài báo.
-  2. Gộp Sapo/Tít phụ vào Content.
-  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
-  4. Giữ nguyên tiêu đề bài báo.
-  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác.
+  2. Gộp Sapo/Tít phụ vào Content. Sapo thường là đoạn văn có font chữ lớn hơn hoặc in đậm, nằm ngay dưới hoặc bên cạnh tiêu đề chính.
+  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang). Tuy nhiên, CẨN THẬN không nhầm lẫn đoạn văn đầu tiên của bài báo với Header.
+  4. Giữ nguyên tiêu đề bài báo. KHÔNG tự ý thêm dấu hai chấm (:) hay bất kỳ ký tự nào vào tiêu đề hoặc nội dung.
+  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác. Lưu ý rằng bài báo có thể có bố cục phức tạp, ví dụ: cột nội dung đầu tiên có thể bắt đầu ngang hàng với tiêu đề chính hoặc thậm chí nằm phía trên tiêu đề chính trong một số trường hợp.
   6. Nếu một đoạn văn trông giống Caption nhưng chứa nội dung dẫn dắt câu chuyện, hãy giữ lại trong Content.
-  7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
+  7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo. Tuyệt đối không bỏ qua đoạn văn đầu tiên của bài báo.
   8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
   9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
+  10. Tít phụ (Sub-headlines) nằm trong cột nội dung phải được giữ nguyên vị trí trong mảng content, không được đưa lên làm tiêu đề chính.
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
@@ -521,9 +521,9 @@ export async function extractArticlesHybrid(
   console.time("GeminiAPITime");
   
   const modelsToTry = [
-    "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite-preview"
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-pro-preview"
   ];
 
   let finalArticles: Article[] = [];
@@ -543,11 +543,15 @@ export async function extractArticlesHybrid(
     contents.push({ parts: [{ text: prompt }] });
   }
 
-  for (const apiKey of apiKeys) {
-    for (const model of modelsToTry) {
+  for (let k = sessionState.currentKeyIndex; k < apiKeys.length; k++) {
+    const apiKey = apiKeys[k];
+    const startM = (k === sessionState.currentKeyIndex) ? sessionState.currentModelIndex : 0;
+    
+    for (let m = startM; m < modelsToTry.length; m++) {
+      const model = modelsToTry[m];
       const ai = new GoogleGenAI({ apiKey });
       try {
-        console.log(`Đang thử model: ${model} với key: ${apiKey.substring(0, 8)}...`);
+        console.log(`Đang thử model: ${model} với key: ${apiKey.substring(0, 8)}... (KeyIndex: ${k}, ModelIndex: ${m})`);
         const responseStream = await ai.models.generateContentStream({
           model: model,
           contents: contents,
@@ -605,9 +609,7 @@ export async function extractArticlesHybrid(
                   seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
                   pageNumbers: [pageNumber],
                   fileName: fileName,
-                  articleRegionId: "",
-                  container_box: art.container_box || { x: 0, y: 0, width: 0, height: 0 },
-                  warning_blocks: art.warning_blocks || []
+                  articleRegionId: ""
                 };
                 
                 finalArticles.push(article);
@@ -619,29 +621,16 @@ export async function extractArticlesHybrid(
           }
         }
         
+        // Lưu lại trạng thái đang hoạt động tốt
+        sessionState.currentKeyIndex = k;
+        sessionState.currentModelIndex = m;
         success = true;
         break; // Thoát khỏi vòng lặp model nếu thành công
       } catch (error: any) {
         console.error(`Lỗi với model ${model} (Key: ${apiKey.substring(0, 8)}...):`, error);
         lastError = error;
         
-        // Robust error parsing
-        let errorMessage = "";
-        let errorStatus: any = null;
-        
-        if (typeof error === 'string') {
-            errorMessage = error;
-        } else if (error && typeof error === 'object') {
-            if (error.error && typeof error.error === 'object') {
-                errorMessage = error.error.message || "";
-                errorStatus = error.error.status || error.error.code;
-            } else {
-                errorMessage = error.message || "";
-                errorStatus = error.status || error.code;
-            }
-        }
-        
-        const isQuotaError = errorStatus === 429 || errorStatus === "RESOURCE_EXHAUSTED" || errorMessage.includes("429") || errorMessage.includes("quota");
+        const isQuotaError = error?.status === 429 || error?.status === "RESOURCE_EXHAUSTED" || error?.message?.includes("429") || error?.message?.includes("quota");
         
         if (isQuotaError) {
           console.log(`Model ${model} với key ${apiKey.substring(0, 8)}... hết quota, chuyển sang model tiếp theo...`);
@@ -655,12 +644,17 @@ export async function extractArticlesHybrid(
     
     if (success) {
       break; // Thoát khỏi vòng lặp key nếu thành công
+    } else {
+      // Nếu hết model của key này mà vẫn chưa thành công, reset model index về 0 cho key tiếp theo
+      sessionState.currentModelIndex = 0;
     }
   }
 
   console.timeEnd("GeminiAPITime");
 
   if (!success) {
+    sessionState.currentKeyIndex = 0;
+    sessionState.currentModelIndex = 0;
     throw new QuotaExhaustedError("Thành thật xin lỗi! Hiện đã hết quota Gemini để xử lý. Xin chờ đến hôm sau mình làm tiếp nhé!", finalArticles);
   }
 

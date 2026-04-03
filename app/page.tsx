@@ -284,7 +284,9 @@ function NewspaperLayoutContent() {
     // Load pdfjs only on client
     const loadPdfJs = async () => {
       try {
-        const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+        // Use non-legacy build for better compatibility with modern bundlers
+        const pdfjsModule = await import('pdfjs-dist/build/pdf.mjs');
+        const pdfjs = pdfjsModule.default || pdfjsModule;
         
         if (pdfjs) {
           pdfjsRef.current = pdfjs;
@@ -292,7 +294,7 @@ function NewspaperLayoutContent() {
           if (pdfjs.GlobalWorkerOptions) {
             // Use the version from the package
             const version = pdfjs.version || '5.6.205';
-            pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/legacy/build/pdf.worker.min.mjs`;
+            pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
           }
         }
       } catch (error) {

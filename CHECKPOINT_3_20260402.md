@@ -15,5 +15,5 @@ Triển khai giải pháp **Kiểm tra độ phủ (Coverage Validation)** và *
 1. Viết hàm chuẩn hóa chuỗi (xóa khoảng trắng, dấu câu).
 2. Viết hàm đối chiếu `aiGiantNormalizedString` với `sourceBlocks`.
 3. Nhận diện các Orphan Text (đoạn văn bị bỏ sót).
-4. Cập nhật vòng lặp gọi API trong `geminiProcessor.ts` để tự động Retry (mớm lại Orphan Text) và Nâng cấp Model (lên `gemini-3.1-pro-preview`) nếu cần thiết.
+4. Cập nhật vòng lặp gọi API trong `geminiProcessor.ts` để tự động Retry (mớm lại Orphan Text) và Nâng cấp Model (lên `gemini-3.1-pro-preview`) nếu cần thiết (ưu tiên `gemini-3-flash-preview` trước).
 5. Hiển thị cảnh báo trên UI nếu vẫn còn Orphan Text sau 3 lần thử.

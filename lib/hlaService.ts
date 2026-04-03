@@ -327,44 +327,52 @@ export class HLAService {
   /**
    * Sắp xếp các block theo thứ tự đọc thông minh (Column-aware sorting)
    * Tuân thủ nguyên tắc:
-   * 1. Khối tiêu đề (Headline) và các phần phụ (Sapo, Caption, PageCue) đọc trước.
+   * 1. Khối Tiêu đề, Tác giả, Sapo, Chú thích ảnh (thường là các khối có chiều rộng chiếm nhiều cột) đọc trước.
    * 2. Các cột nội dung (Content) đọc sau, từ trái sang phải, từ trên xuống dưới.
    */
   private sortBlocksByReadingOrder(blocks: HLABlock[]): HLABlock[] {
     if (blocks.length <= 1) return blocks;
 
-    const headerMetaBlocks: HLABlock[] = [];
-    const bodyBlocks: HLABlock[] = [];
+    const spanningBlocks: HLABlock[] = [];
+    const columnBlocks: HLABlock[] = [];
 
-    // 1. Phân loại block thành nhóm Header/Meta và nhóm Body (Content)
+    // Xác định chiều rộng vùng chứa để phát hiện block "tràn cột" (spanning)
+    const minX = Math.min(...blocks.map(b => b.bbox.x));
+    const maxX = Math.max(...blocks.map(b => b.bbox.x + b.bbox.width));
+    const zoneWidth = maxX - minX;
+
+    // 1. Phân loại block thành nhóm Spanning (Ưu tiên) và nhóm Column (Nội dung)
     blocks.forEach(block => {
-      if (['Headline', 'Sapo', 'Caption', 'PageCue'].includes(block.label)) {
-        headerMetaBlocks.push(block);
+      const isWide = block.bbox.width > zoneWidth * 0.2; // Chiếm hơn 20% chiều rộng zone
+      
+      // Chỉ ưu tiên đưa lên đầu nếu là nhãn đặc biệt VÀ (phải rộng HOẶC là PageCue/Author)
+      // Tít phụ (Headline nhưng không rộng) nên để lại trong cột nội dung để giữ đúng thứ tự đọc.
+      const isSpanningLabel = ['Headline', 'Sapo', 'Caption'].includes(block.label) && isWide;
+      const isMetaLabel = ['Author', 'PageCue'].includes(block.label);
+      
+      if (isSpanningLabel || isMetaLabel) {
+        spanningBlocks.push(block);
       } else {
-        bodyBlocks.push(block);
+        columnBlocks.push(block);
       }
     });
 
-    // Sắp xếp nhóm Header/Meta từ trên xuống dưới
-    headerMetaBlocks.sort((a, b) => a.bbox.y - b.bbox.y);
+    // Sắp xếp nhóm Spanning theo thứ tự từ trên xuống dưới (Y)
+    spanningBlocks.sort((a, b) => a.bbox.y - b.bbox.y);
 
-    // 2. Nhóm bodyBlocks vào các cột ảo dựa trên sự chồng lấp X
+    // 2. Nhóm columnBlocks vào các cột ảo dựa trên sự chồng lấp X
     const columns: HLABlock[][] = [];
-    // Sắp xếp theo X trước để dễ nhóm
-    const sortedByX = [...bodyBlocks].sort((a, b) => a.bbox.x - b.bbox.x);
+    const sortedByX = [...columnBlocks].sort((a, b) => a.bbox.x - b.bbox.x);
 
     sortedByX.forEach(block => {
       let placed = false;
       for (const col of columns) {
-        // Lấy phạm vi X của cột hiện tại
         const colX1 = Math.min(...col.map(b => b.bbox.x));
         const colX2 = Math.max(...col.map(b => b.bbox.x + b.bbox.width));
         
-        // Tính độ chồng lấp X
         const overlapX = Math.max(0, Math.min(block.bbox.x + block.bbox.width, colX2) - Math.max(block.bbox.x, colX1));
         const minWidth = Math.min(block.bbox.width, colX2 - colX1);
         
-        // Nếu chồng lấp > 40% chiều rộng, coi như cùng cột
         if (overlapX > minWidth * 0.4) {
           col.push(block);
           placed = true;
@@ -390,8 +398,8 @@ export class HLAService {
       sortedBody.push(...col);
     });
 
-    // 5. Gộp lại: Header/Meta đọc trước, Body đọc sau
-    return [...headerMetaBlocks, ...sortedBody];
+    // 5. Gộp lại: Spanning blocks (Tiêu đề, Sapo,...) đọc trước, Body (Cột nội dung) đọc sau
+    return [...spanningBlocks, ...sortedBody];
   }
 
   /**
@@ -635,17 +643,19 @@ export class HLAService {
           block.isIndented = true;
         }
 
+        const isWide = block.bbox.width > zone.bbox.width * 0.2;
+
         // 2. Nhận diện PageCue
         if (cueRegex.test(block.text)) {
           block.label = 'PageCue';
         } 
-        // 3. Phân loại theo font size: Title/Sapo > Base + 4pt
-        else if (block.fontSize > this.baseFontSize + 4) {
+        // 3. Phân loại theo font size và chiều rộng: Title/Sapo > Base + 4pt hoặc tràn cột
+        else if (block.fontSize > this.baseFontSize + 4 || (isWide && block.fontSize > this.baseFontSize + 2)) {
           block.label = 'Headline';
-        } else if (block.fontSize > this.baseFontSize + 1) {
-          // Chỉ gán nhãn Sapo nếu nó nằm gần một Headline trong cùng zone
-          const nearHeadline = zone.blocks.some(b => b.label === 'Headline' && Math.abs(b.bbox.y - block.bbox.y) < 100);
-          if (nearHeadline) {
+        } else if (block.fontSize > this.baseFontSize + 1 || isWide) {
+          // Chỉ gán nhãn Sapo nếu nó nằm gần một Headline trong cùng zone hoặc có chiều rộng lớn
+          const nearHeadline = zone.blocks.some(b => b.label === 'Headline' && Math.abs(b.bbox.y - block.bbox.y) < 250);
+          if (nearHeadline || isWide) {
             block.label = 'Sapo';
           } else {
             block.label = 'Content';

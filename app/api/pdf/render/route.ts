@@ -28,7 +28,8 @@ class NodeCanvasFactory {
 
 export async function POST(req: NextRequest) {
   try {
-    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.min.mjs');
+    const pdfjsModule = await import('pdfjs-dist/build/pdf.min.mjs');
+    const pdfjs = pdfjsModule.default || pdfjsModule;
     const formData = await req.formData();
     const file = formData.get('file') as File;
     const pageNum = parseInt(formData.get('pageNum') as string || '1');

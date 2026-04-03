@@ -19,5 +19,5 @@ export const getCache = async (storeName: 'layoutCache' | 'extractionCache', key
 
 export const setCache = async (storeName: 'layoutCache' | 'extractionCache', key: string, value: any) => {
   const db = await initDB();
-  return db.put(storeName, key, value);
+  return db.put(storeName, value, key);
 };
