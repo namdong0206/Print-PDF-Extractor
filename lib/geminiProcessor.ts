@@ -14,6 +14,12 @@ export interface TextBlock {
   ind?: boolean; // is_indented
 }
 
+export interface ArticleMedia {
+  type: 'image';
+  base64: string;
+  caption?: string;
+}
+
 export interface Article {
   id: string;
   articleRegionId: string;
@@ -27,6 +33,7 @@ export interface Article {
   fileName?: string;
   container_box?: { x: number; y: number; width: number; height: number };
   warning_blocks?: any[];
+  media?: ArticleMedia[];
 }
 
 export class QuotaExhaustedError extends Error {
