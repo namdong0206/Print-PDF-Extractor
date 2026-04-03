@@ -202,16 +202,17 @@ export const groupTextBlocksIntoArticles = (textBlocks: TextBlock[], regions: Ar
       return a.y - b.y;
     });
     
-    const minX = sortedBoxes.length > 0 ? Math.min(...sortedBoxes.map(b => b.x)) : 0;
-    const minY = sortedBoxes.length > 0 ? Math.min(...sortedBoxes.map(b => b.y)) : 0;
-    const maxX = sortedBoxes.length > 0 ? Math.max(...sortedBoxes.map(b => b.x + b.width)) : 0;
-    const maxY = sortedBoxes.length > 0 ? Math.max(...sortedBoxes.map(b => b.y + b.height)) : 0;
-    
+    const minX = groupedBoxes.length > 0 ? Math.min(...groupedBoxes.map(b => b.x)) : 0;
+    const maxX = groupedBoxes.length > 0 ? Math.max(...groupedBoxes.map(b => b.x + b.width)) : 0;
+    const minY = groupedBoxes.length > 0 ? Math.min(...groupedBoxes.map(b => b.y)) : 0;
+    const maxY = groupedBoxes.length > 0 ? Math.max(...groupedBoxes.map(b => b.y + b.height)) : 0;
+
     const article: Article = {
       id: `article_${regionId}`,
       articleRegionId: regionId,
       title: sortedBoxes[0]?.text || "Không có tiêu đề",
       author: "",
+      lead: "",
       content: sortedBoxes.map(b => b.text || ""),
       imageCaption: "",
       seePage: "",

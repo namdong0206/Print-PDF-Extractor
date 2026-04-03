@@ -19,11 +19,14 @@ export interface Article {
   articleRegionId: string;
   title: string;
   author: string;
+  lead?: string;
   content: string[];
   imageCaption: string;
   seePage: string;
   pageNumbers: number[];
   fileName?: string;
+  container_box?: { x: number; y: number; width: number; height: number };
+  warning_blocks?: any[];
 }
 
 export class QuotaExhaustedError extends Error {
@@ -568,6 +571,7 @@ export async function extractArticlesHybrid(
                 properties: {
                   title: { type: Type.STRING },
                   author: { type: Type.STRING },
+                  lead: { type: Type.STRING },
                   content: { 
                     type: Type.ARRAY,
                     items: { type: Type.STRING }
@@ -602,6 +606,7 @@ export async function extractArticlesHybrid(
                   id,
                   title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
                   author: art.author && art.author !== 'null' ? art.author : "",
+                  lead: art.lead && art.lead !== 'null' ? art.lead : "",
                   content: (Array.isArray(art.content) ? art.content : [])
                     .map((p: string) => p.trim())
                     .filter((p: string) => p.length > 0 && p !== 'null'),
