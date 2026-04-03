@@ -525,7 +525,7 @@ function NewspaperLayoutContent() {
     setSelectedFiles(newSelection);
   };
 
-  const processInParallel = async (indices: number[], concurrency: number = 2) => {
+  const processInParallel = async (indices: number[], concurrency: number = 8) => {
     const results: Article[] = [];
     let currentIndex = 0;
     let quotaError: any = null;
@@ -935,27 +935,36 @@ function NewspaperLayoutContent() {
           <div className="flex-1 overflow-y-auto p-6 bg-white rounded-2xl border border-gray-200 shadow-sm" ref={articleDetailRef}>
             {selectedArticle ? (
               <div className="space-y-6">
-                <div className="flex items-center justify-between gap-4">
-                  <h1 className="text-3xl font-serif font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => exportArticleToWord(selectedArticle)}
-                      className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
-                      title="Xuất file Word (.docx)"
-                    >
-                      <FileDown size={18} />
-                      <span className="hidden md:inline">Xuất file Word</span>
-                    </button>
-                    <a 
-                      href={`/api/article/raw/${selectedArticle.id}`} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
-                      title="Mở trang riêng"
-                    >
-                      <ExternalLink size={18} />
-                      <span className="hidden md:inline">Xem trang riêng</span>
-                    </a>
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-center justify-between gap-4 border-b border-gray-100 pb-4">
+                    <div className="text-sm font-medium text-gray-500">
+                      {selectedArticle.pageNumbers && selectedArticle.pageNumbers.length > 0 && (
+                        <span>Bài trang: {Array.from(new Set(selectedArticle.pageNumbers)).join(' + ')}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => exportArticleToWord(selectedArticle)}
+                        className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
+                        title="Xuất file Word (.docx)"
+                      >
+                        <FileDown size={18} />
+                        <span className="hidden md:inline">Xuất file Word</span>
+                      </button>
+                      <a 
+                        href={`/api/article/raw/${selectedArticle.id}`} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
+                        title="Mở trang riêng"
+                      >
+                        <ExternalLink size={18} />
+                        <span className="hidden md:inline">Xem trang riêng</span>
+                      </a>
+                    </div>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <h1 className="text-3xl font-serif font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
                     <CopyButton text={selectedArticle.title} label="Tiêu đề" />
                   </div>
                 </div>
