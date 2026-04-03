@@ -194,7 +194,16 @@ export class HLAService {
         const verticalThreshold = isHeadline ? 40 : 15;
 
         if (sameLabel && Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < verticalThreshold) {
-          current.text += " " + next.text;
+          // Nếu block tiếp theo có thụt lề, hoặc khoảng cách dọc lớn hơn bình thường (nhưng vẫn trong ngưỡng gom),
+          // ta ngắt dòng bằng \n để giữ ranh giới đoạn văn.
+          const isNewParagraph = next.isIndented || Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) > (current.fontSize * 0.8);
+          
+          if (isNewParagraph) {
+            current.text += "\n" + next.text;
+          } else {
+            current.text += " " + next.text;
+          }
+          
           const newMaxX = Math.max(current.bbox.x + current.bbox.width, next.bbox.x + next.bbox.width);
           const newMaxY = Math.max(current.bbox.y + current.bbox.height, next.bbox.y + next.bbox.height);
           current.bbox.x = Math.min(current.bbox.x, next.bbox.x);
@@ -333,20 +342,18 @@ export class HLAService {
   private sortBlocksByReadingOrder(blocks: HLABlock[]): HLABlock[] {
     if (blocks.length <= 1) return blocks;
 
-    const spanningBlocks: HLABlock[] = [];
-    const columnBlocks: HLABlock[] = [];
-
-    // Xác định chiều rộng vùng chứa để phát hiện block "tràn cột" (spanning)
     const minX = Math.min(...blocks.map(b => b.bbox.x));
     const maxX = Math.max(...blocks.map(b => b.bbox.x + b.bbox.width));
     const zoneWidth = maxX - minX;
 
     // 1. Phân loại block thành nhóm Spanning (Ưu tiên) và nhóm Column (Nội dung)
+    const spanningBlocks: HLABlock[] = [];
+    const columnBlocks: HLABlock[] = [];
+
     blocks.forEach(block => {
-      const isWide = block.bbox.width > zoneWidth * 0.2; // Chiếm hơn 20% chiều rộng zone
+      // Độ rộng ít nhất 45% zoneWidth (tương đương >= 2 cột trong layout 3-4 cột, hoặc full cột)
+      const isWide = block.bbox.width > zoneWidth * 0.45;
       
-      // Chỉ ưu tiên đưa lên đầu nếu là nhãn đặc biệt VÀ (phải rộng HOẶC là PageCue/Author)
-      // Tít phụ (Headline nhưng không rộng) nên để lại trong cột nội dung để giữ đúng thứ tự đọc.
       const isSpanningLabel = ['Headline', 'Sapo', 'Caption'].includes(block.label) && isWide;
       const isMetaLabel = ['Author', 'PageCue'].includes(block.label);
       
@@ -357,49 +364,86 @@ export class HLAService {
       }
     });
 
-    // Sắp xếp nhóm Spanning theo thứ tự từ trên xuống dưới (Y)
-    spanningBlocks.sort((a, b) => a.bbox.y - b.bbox.y);
+    // Sắp xếp nhóm Spanning theo thứ tự từ trên xuống dưới (Y), nếu Y gần bằng nhau thì theo X
+    spanningBlocks.sort((a, b) => {
+      if (Math.abs(a.bbox.y - b.bbox.y) < 20) {
+        return a.bbox.x - b.bbox.x;
+      }
+      return a.bbox.y - b.bbox.y;
+    });
 
-    // 2. Nhóm columnBlocks vào các cột ảo dựa trên sự chồng lấp X
-    const columns: HLABlock[][] = [];
-    const sortedByX = [...columnBlocks].sort((a, b) => a.bbox.x - b.bbox.x);
+    // 2. Tạo các dải ngang (horizontal bands) dựa trên spanningBlocks
+    // Mỗi band chứa các spanning blocks ở cùng mức Y, và các column blocks nằm dưới chúng
+    const bands: { spanning: HLABlock[], columns: HLABlock[], maxY: number }[] = [];
+    bands.push({ spanning: [], columns: [], maxY: 0 }); // Band 0 cho các block nằm trên cùng
 
-    sortedByX.forEach(block => {
-      let placed = false;
-      for (const col of columns) {
-        const colX1 = Math.min(...col.map(b => b.bbox.x));
-        const colX2 = Math.max(...col.map(b => b.bbox.x + b.bbox.width));
-        
-        const overlapX = Math.max(0, Math.min(block.bbox.x + block.bbox.width, colX2) - Math.max(block.bbox.x, colX1));
-        const minWidth = Math.min(block.bbox.width, colX2 - colX1);
-        
-        if (overlapX > minWidth * 0.4) {
-          col.push(block);
-          placed = true;
-          break;
+    spanningBlocks.forEach(spanBlock => {
+      const lastBand = bands[bands.length - 1];
+      // Nếu spanBlock này nằm ngang hàng với spanBlock trước đó trong band
+      if (lastBand.spanning.length > 0 && Math.abs(spanBlock.bbox.y - lastBand.spanning[0].bbox.y) < 20) {
+        lastBand.spanning.push(spanBlock);
+        lastBand.maxY = Math.max(lastBand.maxY, spanBlock.bbox.y);
+      } else {
+        bands.push({ spanning: [spanBlock], columns: [], maxY: spanBlock.bbox.y });
+      }
+    });
+
+    // Phân bổ columnBlocks vào các bands
+    columnBlocks.forEach(colBlock => {
+      let targetBandIdx = 0;
+      for (let i = 1; i < bands.length; i++) {
+        // Nếu column block nằm dưới band này
+        if (colBlock.bbox.y + colBlock.bbox.height / 2 > bands[i].maxY) {
+          targetBandIdx = i;
         }
       }
-      if (!placed) {
-        columns.push([block]);
+      bands[targetBandIdx].columns.push(colBlock);
+    });
+
+    // 3. Sắp xếp và gộp kết quả
+    const finalSorted: HLABlock[] = [];
+
+    bands.forEach(band => {
+      finalSorted.push(...band.spanning);
+
+      if (band.columns.length > 0) {
+        const columns: HLABlock[][] = [];
+        const sortedByX = [...band.columns].sort((a, b) => a.bbox.x - b.bbox.x);
+
+        sortedByX.forEach(block => {
+          let placed = false;
+          for (const col of columns) {
+            const colX1 = Math.min(...col.map(b => b.bbox.x));
+            const colX2 = Math.max(...col.map(b => b.bbox.x + b.bbox.width));
+            
+            const overlapX = Math.max(0, Math.min(block.bbox.x + block.bbox.width, colX2) - Math.max(block.bbox.x, colX1));
+            const minWidth = Math.min(block.bbox.width, colX2 - colX1);
+            
+            if (overlapX > minWidth * 0.4) {
+              col.push(block);
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) {
+            columns.push([block]);
+          }
+        });
+
+        columns.sort((a, b) => {
+          const aX = Math.min(...a.map(b => b.bbox.x));
+          const bX = Math.min(...b.map(b => b.bbox.x));
+          return aX - bX;
+        });
+
+        columns.forEach(col => {
+          col.sort((a, b) => a.bbox.y - b.bbox.y);
+          finalSorted.push(...col);
+        });
       }
     });
 
-    // 3. Sắp xếp các cột từ trái sang phải
-    columns.sort((a, b) => {
-      const aX = Math.min(...a.map(b => b.bbox.x));
-      const bX = Math.min(...b.map(b => b.bbox.x));
-      return aX - bX;
-    });
-
-    // 4. Sắp xếp các block trong mỗi cột từ trên xuống dưới
-    const sortedBody: HLABlock[] = [];
-    columns.forEach(col => {
-      col.sort((a, b) => a.bbox.y - b.bbox.y);
-      sortedBody.push(...col);
-    });
-
-    // 5. Gộp lại: Spanning blocks (Tiêu đề, Sapo,...) đọc trước, Body (Cột nội dung) đọc sau
-    return [...spanningBlocks, ...sortedBody];
+    return finalSorted;
   }
 
   /**
@@ -432,7 +476,7 @@ export class HLAService {
         const bestGap = sortedGaps[0];
         
         // Chỉ cắt nếu gap đủ rộng hoặc có đường kẻ phân tách
-        if (bestGap.width > 6) {
+        if (bestGap.width > 4) {
           const leftBlocks = zone.blocks.filter(b => b.bbox.x + b.bbox.width <= bestGap.start + 3);
           const rightBlocks = zone.blocks.filter(b => b.bbox.x >= bestGap.start + bestGap.width - 3);
           
@@ -526,7 +570,7 @@ export class HLAService {
         if (gapStart !== -1) {
           const gapWidth = i - gapStart;
           // Ngưỡng phát hiện gap: Dọc (cột) cần rộng hơn Ngang (dòng)
-          const threshold = direction === 'V' ? 5 : 3;
+          const threshold = direction === 'V' ? 3 : 3;
           if (gapWidth > threshold) { 
             gaps.push({ start: gapStart + offset, width: gapWidth });
           }
@@ -535,7 +579,7 @@ export class HLAService {
       }
     }
     // Xử lý gap cuối cùng nếu có
-    if (gapStart !== -1 && occupied.length - gapStart > (direction === 'V' ? 5 : 3)) {
+    if (gapStart !== -1 && occupied.length - gapStart > (direction === 'V' ? 3 : 3)) {
       gaps.push({ start: gapStart + offset, width: occupied.length - gapStart });
     }
 
@@ -550,7 +594,8 @@ export class HLAService {
         
         if (isInside) {
           const pos = direction === 'V' ? line.x1 : line.y1;
-          gaps.push({ start: pos - 1, width: 2 });
+          // Tăng width lên rất lớn để ưu tiên cắt tại đường kẻ vector
+          gaps.push({ start: pos - 1, width: 1000 });
         }
       }
     });
@@ -638,8 +683,16 @@ export class HLAService {
     zones.forEach(zone => {
       // Phân loại các block trước
       zone.blocks.forEach(block => {
-        // 1. Nhận diện thụt lề (Indentation): Khớp với mô hình 4pt
-        if (block.bbox.x > zone.bbox.x + 4 && block.fontSize <= this.baseFontSize + 1) {
+        // 1. Nhận diện thụt lề (Indentation): Tính toán dựa trên lề trái của cột chứa block
+        const overlappingBlocks = zone.blocks.filter(b => {
+          const overlapX = Math.max(0, Math.min(block.bbox.x + block.bbox.width, b.bbox.x + b.bbox.width) - Math.max(block.bbox.x, b.bbox.x));
+          const minWidth = Math.min(block.bbox.width, b.bbox.width);
+          return overlapX > minWidth * 0.4; // Chồng lấp ít nhất 40%
+        });
+        
+        const columnMinX = overlappingBlocks.length > 0 ? Math.min(...overlappingBlocks.map(b => b.bbox.x)) : block.bbox.x;
+
+        if (block.bbox.x > columnMinX + 4 && block.fontSize <= this.baseFontSize + 1) {
           block.isIndented = true;
         }
 

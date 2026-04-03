@@ -284,8 +284,8 @@ function NewspaperLayoutContent() {
     // Load pdfjs only on client
     const loadPdfJs = async () => {
       try {
-        // Use non-legacy build for better compatibility with modern bundlers
-        const pdfjsModule = await import('pdfjs-dist/build/pdf.mjs');
+        // Use legacy build for better compatibility with modern bundlers
+        const pdfjsModule = await import('pdfjs-dist/legacy/build/pdf.min.mjs');
         const pdfjs = pdfjsModule.default || pdfjsModule;
         
         if (pdfjs) {
@@ -294,7 +294,7 @@ function NewspaperLayoutContent() {
           if (pdfjs.GlobalWorkerOptions) {
             // Use the version from the package
             const version = pdfjs.version || '5.6.205';
-            pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+            pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/legacy/build/pdf.worker.min.mjs`;
           }
         }
       } catch (error) {
@@ -391,7 +391,9 @@ function NewspaperLayoutContent() {
         const arrayBuffer = await fileToLoad.arrayBuffer();
         const loadingTask = pdfjs.getDocument({ 
           data: arrayBuffer,
-          disableFontFace: true,
+          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+          cMapPacked: true,
+          standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
           disableRange: true
         });
         const pdfDoc = await loadingTask.promise;
@@ -897,6 +899,36 @@ function NewspaperLayoutContent() {
               )}
             </div>
           </div>
+          <div className="flex justify-between px-2 text-[10px] text-gray-400 opacity-50 hover:opacity-100 transition-opacity">
+            <button 
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(hlaZones, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'payload.json';
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="hover:underline cursor-pointer"
+            >
+              ↓ JSON Payload
+            </button>
+            <button 
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(articles, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'final.json';
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="hover:underline cursor-pointer"
+            >
+              ↓ JSON Final
+            </button>
+          </div>
         </div>
 
         <div className="col-span-8 flex flex-col gap-6 h-full overflow-hidden">
@@ -933,6 +965,12 @@ function NewspaperLayoutContent() {
                     <CopyButton text={selectedArticle.author} label="Tác giả" />
                   </div>
                 )}
+                {selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' && (
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="text-sm text-gray-600 italic">Chú thích ảnh: {selectedArticle.imageCaption}</div>
+                    <CopyButton text={selectedArticle.imageCaption} label="Chú thích ảnh" />
+                  </div>
+                )}
                 <div className="space-y-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-4">
@@ -943,20 +981,14 @@ function NewspaperLayoutContent() {
                     <CopyButton text={selectedArticle.content.join('\n\n')} label="Nội dung" />
                   </div>
                 </div>
-                {selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' && (
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="text-sm text-gray-600 italic">Chú thích ảnh: {selectedArticle.imageCaption}</div>
-                    <CopyButton text={selectedArticle.imageCaption} label="Chú thích ảnh" />
-                  </div>
-                )}
                 <div className="pt-4 border-t border-gray-200">
                   <CopyButton 
                     variant="square"
                     text={[
                       selectedArticle.title,
                       selectedArticle.author && selectedArticle.author !== 'null' ? `Tác giả: ${selectedArticle.author}` : '',
-                      ...selectedArticle.content,
-                      selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' ? `Chú thích ảnh: ${selectedArticle.imageCaption}` : ''
+                      selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' ? `Chú thích ảnh: ${selectedArticle.imageCaption}` : '',
+                      ...selectedArticle.content
                     ].filter(Boolean).join('\n\n')} 
                     label="toàn bộ bài báo" 
                   />

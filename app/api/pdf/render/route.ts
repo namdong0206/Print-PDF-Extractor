@@ -28,7 +28,7 @@ class NodeCanvasFactory {
 
 export async function POST(req: NextRequest) {
   try {
-    const pdfjsModule = await import('pdfjs-dist/build/pdf.min.mjs');
+    const pdfjsModule = await import('pdfjs-dist/legacy/build/pdf.min.mjs');
     const pdfjs = pdfjsModule.default || pdfjsModule;
     const formData = await req.formData();
     const file = formData.get('file') as File;
@@ -47,6 +47,8 @@ export async function POST(req: NextRequest) {
       data,
       useSystemFonts: true,
       disableFontFace: true, // Important for Node.js
+      cMapUrl: 'https://unpkg.com/pdfjs-dist@5.6.205/cmaps/',
+      cMapPacked: true,
       standardFontDataUrl: 'https://unpkg.com/pdfjs-dist@5.6.205/standard_fonts/',
     });
     const pdfDoc = await loadingTask.promise;

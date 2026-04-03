@@ -72,22 +72,44 @@ const getLongestCommonSubstringLen = (s1: string, s2: string): number => {
 
 // Hàm tính toán độ tương đồng của tiêu đề (so sánh trên toàn bộ chuỗi)
 export const getTitleSimilarity = (t1: string, t2: string) => {
-  const s1 = normalize(t1);
-  const s2 = normalize(t2);
+  const cleanSuffixes = (s: string) => s.replace(/\(?(tiếp theo|xem tiếp|tiếp từ|trang \d+)\)?/g, "").trim();
+  const s1 = cleanSuffixes(normalize(t1));
+  const s2 = cleanSuffixes(normalize(t2));
+  
   if (s1 === s2) return 1;
   
   const minLen = Math.min(s1.length, s2.length);
-  if (minLen < 10) return s1 === s2 ? 1 : 0; // Tiêu đề quá ngắn thì yêu cầu khớp chính xác
+  const maxLen = Math.max(s1.length, s2.length);
+  if (minLen < 10) return s1 === s2 ? 1 : 0;
 
-  // Tìm chuỗi con chung dài nhất giữa 2 tiêu đề
   const lcsLen = getLongestCommonSubstringLen(s1, s2);
-  
-  return lcsLen / minLen;
+  return lcsLen / maxLen;
 };
 
-// Hàm kiểm tra độ tương đồng phần đầu (ít nhất 80%)
+// Hàm kiểm tra độ tương đồng phần đầu (ít nhất 85% của chuỗi dài, hoặc 95% chuỗi ngắn)
 export const isSimilarTitle = (t1: string, t2: string) => {
-  return getTitleSimilarity(t1, t2) >= 0.8;
+  const cleanSuffixes = (s: string) => s.replace(/\(?(tiếp theo|xem tiếp|tiếp từ|trang \d+)\)?/g, "").trim();
+  const s1 = cleanSuffixes(normalize(t1));
+  const s2 = cleanSuffixes(normalize(t2));
+  
+  if (s1 === s2) return true;
+  
+  const minLen = Math.min(s1.length, s2.length);
+  const maxLen = Math.max(s1.length, s2.length);
+  if (minLen < 10) return false;
+
+  const lcsLen = getLongestCommonSubstringLen(s1, s2);
+  
+  if (lcsLen / maxLen >= 0.85) return true;
+
+  if (lcsLen / minLen >= 0.95) {
+    const lengthDiff = maxLen - minLen;
+    if (lengthDiff <= 15 || lengthDiff <= maxLen * 0.2) {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 export function mergeArticles(articles: Article[]): Article[] {
@@ -523,6 +545,9 @@ export async function extractArticlesHybrid(
   8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
   9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
   10. Tít phụ (Sub-headlines) nằm trong cột nội dung phải được giữ nguyên vị trí trong mảng content, không được đưa lên làm tiêu đề chính.
+  11. PHÂN BIỆT CÁC BÀI BÁO ĐỘC LẬP: Nếu trong JSON có nhiều tiêu đề lớn (Headline) khác nhau, hãy tách chúng thành các bài báo riêng biệt. KHÔNG gộp nội dung của bài báo này vào bài báo khác, đặc biệt là các bài có tiêu đề gần giống nhau nhưng là hai bài độc lập (ví dụ: bài tường thuật hội nghị và bài phát biểu tại hội nghị).
+  12. TÁCH BIỆT TÁC GIẢ VÀ CHÚ THÍCH ẢNH: Tuyệt đối không để tên tác giả hoặc chú thích ảnh (caption) lẫn vào trong mảng \`content\`. Hãy trích xuất riêng tên tác giả vào trường \`author\` và chú thích ảnh vào trường \`imageCaption\`. Nếu không có, để là "null".
+  13. BẢO TOÀN ĐOẠN VĂN: Tuyệt đối không gộp tất cả các đoạn văn thành một khối duy nhất. Mỗi đoạn văn (paragraph) trong bài báo gốc phải được tách thành một phần tử riêng biệt trong mảng \`content\`. Hãy dựa vào dấu hiệu thụt lùi đầu dòng (indentation) hoặc khoảng cách giữa các khối chữ để nhận biết và ngắt đoạn chính xác.
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
