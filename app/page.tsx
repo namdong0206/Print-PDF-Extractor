@@ -551,7 +551,7 @@ function NewspaperLayoutContent() {
     setSelectedFiles(newSelection);
   };
 
-  const processInParallel = async (indices: number[], concurrency: number = 4) => {
+  const processInParallel = async (indices: number[], concurrency: number = 2) => {
     const results: Article[] = [];
     let currentIndex = 0;
     let quotaError: any = null;
