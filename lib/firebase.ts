@@ -3,7 +3,7 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 // Import the Firebase configuration
-import firebaseConfig from '../firebase-applet-config.json';
+import firebaseConfig from '@/firebase-applet-config.json';
 
 // Initialize Firebase SDK
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
