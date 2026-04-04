@@ -33,6 +33,21 @@ export interface VectorData {
 
 let pdfjsModule: any = null;
 
+async function getPdfJs() {
+  if (pdfjsModule) return pdfjsModule;
+  
+  if (typeof window === 'undefined') {
+    // Server-side
+    const module = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    pdfjsModule = module.default || module;
+  } else {
+    // Client-side
+    const module = await import('pdfjs-dist/legacy/build/pdf.min.mjs');
+    pdfjsModule = module.default || module;
+  }
+  return pdfjsModule;
+}
+
 export const extractVectorData = async (page: any): Promise<VectorData> => {
   const lines: VectorLine[] = [];
   const rects: VectorRect[] = [];
@@ -43,11 +58,7 @@ export const extractVectorData = async (page: any): Promise<VectorData> => {
     const viewport = page.getViewport({ scale: 1.0 });
     const pageHeight = viewport.height;
 
-    if (!pdfjsModule) {
-      const module = await import('pdfjs-dist/legacy/build/pdf.min.mjs');
-      pdfjsModule = module.default || module;
-    }
-    const pdfjs = pdfjsModule;
+    const pdfjs = await getPdfJs();
     
     if (!pdfjs || typeof pdfjs !== 'object') {
       throw new Error('Failed to load pdfjs-dist');

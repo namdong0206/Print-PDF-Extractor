@@ -305,14 +305,6 @@ function NewspaperLayoutContent() {
   }, []);
 
   useEffect(() => {
-    return () => {
-      if (pdf) {
-        pdf.destroy().catch((e: any) => console.error("Error destroying pdf:", e));
-      }
-    };
-  }, [pdf]);
-
-  useEffect(() => {
     if (selectedArticle && articleDetailRef.current) {
       articleDetailRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -377,24 +369,6 @@ function NewspaperLayoutContent() {
     setIsExtracting(false);
     
     // Bắt đầu phiên làm việc mới với file đầu tiên
-    try {
-      const uploadRes = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileUrl: newFiles[0].name, userId: 'user123' }),
-      });
-      const uploadData = await uploadRes.json();
-      if (uploadRes.ok) {
-        await fetch('/api/process', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taskId: uploadData.taskId }),
-        });
-      }
-    } catch (e) {
-      console.error("API Error:", e);
-    }
-    
     await loadFile(newFiles[0], true);
   };
 
@@ -551,15 +525,23 @@ function NewspaperLayoutContent() {
     setSelectedFiles(newSelection);
   };
 
-  const processInParallel = async (indices: number[], concurrency: number = 2) => {
+  const processInParallel = async (indices: number[], concurrency: number = 8) => {
     const results: Article[] = [];
     let currentIndex = 0;
     let quotaError: any = null;
     
     const handleArticleParsed = (article: Article) => {
-      // Find the article to save to Firestore
-      console.log(`[DEBUG] Saving article to Firestore: ${article.title}`);
-      setDoc(doc(db, 'articles', article.id), article).catch(e => console.error("Error saving article:", e));
+      setArticles(prev => {
+        const merged = mergeArticles([...prev, article]);
+        
+        // Find the merged version of this article to save to Firestore
+        const mergedArticle = merged.find(a => isSimilarTitle(a.title, article.title));
+        if (mergedArticle) {
+          setDoc(doc(db, 'articles', mergedArticle.id), mergedArticle).catch(e => console.error("Error saving article:", e));
+        }
+        
+        return merged;
+      });
     };
 
     const processNext = async (): Promise<void> => {
@@ -569,65 +551,39 @@ function NewspaperLayoutContent() {
       setProcessingFileIndices(prev => new Set(prev).add(index));
       const file = files[index];
       
-      // Render page for this specific file
-      const pdfjs = pdfjsRef.current;
-      if (!pdfjs) return;
-      
-      let pdfDoc: any = null;
       try {
-        const arrayBuffer = await file.arrayBuffer();
-        const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
-        pdfDoc = await loadingTask.promise;
-        // Always get page 1 of the current file
-        const page = await pdfDoc.getPage(1);
-        
-        // Render to image for Gemini
-        const viewport = page.getViewport({ scale: 1.0 });
-        const MAX_WIDTH = 1600;
-        let scale = 2.0;
-        if (viewport.width * scale > MAX_WIDTH) {
-          scale = MAX_WIDTH / viewport.width;
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('pageNumber', '1');
+        formData.append('fileName', file.name);
+        formData.append('metadataPageNum', (index + 1).toString());
+
+        const response = await fetch('/api/process-pdf', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to process PDF');
         }
-        const renderViewport = page.getViewport({ scale });
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.height = renderViewport.height;
-        canvas.width = renderViewport.width;
+
+        const data = await response.json();
+        const fileArticles = data.articles || [];
         
-        if (context) {
-          await page.render({ canvasContext: context, viewport: renderViewport }).promise;
-          const image = canvas.toDataURL('image/webp', 0.8);
-          // Memory cleanup
-          canvas.width = 0;
-          canvas.height = 0;
-          
-          // Pass 1 as the document page number, but index + 1 as the metadata page number
-          console.time(`ProcessFile-${file.name}`);
-          const fileArticles = await handleExtractArticles(pdfDoc, image, 1, file.name, handleArticleParsed, index + 1);
-          console.timeEnd(`ProcessFile-${file.name}`);
-          console.time(`IntermediateMerge-${file.name}`);
-          setArticles(prev => mergeArticles([...prev, ...fileArticles]));
-          console.timeEnd(`IntermediateMerge-${file.name}`);
-          results.push(...fileArticles);
+        // Update UI with zones for the current file if it's the one being viewed
+        if (currentFileIndex === index) {
+          setHlaZones(data.zones || []);
         }
+
+        fileArticles.forEach((article: Article) => handleArticleParsed(article));
+        results.push(...fileArticles);
       } catch (error: any) {
         console.error(`Error processing file ${file.name}:`, error);
-        if (error instanceof QuotaExhaustedError || error?.message?.includes('Thành thật xin lỗi')) {
+        if (error.message?.includes('quota') || error.message?.includes('Thành thật xin lỗi')) {
           quotaError = error;
-          if (error.partialArticles) {
-            results.push(...error.partialArticles);
-          }
         }
       } finally {
-        if (pdfDoc) {
-          try {
-            console.time(`DestroyPDF-${file.name}`);
-            await pdfDoc.destroy();
-            console.timeEnd(`DestroyPDF-${file.name}`);
-          } catch (e) {
-            console.error("Error destroying pdfDoc:", e);
-          }
-        }
         setProcessingFileIndices(prev => {
           const next = new Set(prev);
           next.delete(index);
@@ -646,7 +602,6 @@ function NewspaperLayoutContent() {
     }
     
     await Promise.all(workers);
-    console.log(`[DEBUG] processInParallel returning ${results.length} articles`);
     if (quotaError) {
       quotaError.partialArticles = results; // Attach all results gathered so far
       throw quotaError;
@@ -689,8 +644,7 @@ function NewspaperLayoutContent() {
           localStorage.setItem('extracted_articles', JSON.stringify(merged));
           setViewMode('articles');
         }
-        setToastMessage(error.message);
-        setTimeout(() => setToastMessage(null), 5000);
+        alert(error.message);
       } else {
         console.error("Lỗi trong quá trình trích xuất:", error);
       }
@@ -714,17 +668,9 @@ function NewspaperLayoutContent() {
       );
 
       const allArticles = await processInParallel(sortedIndices);
-      console.log(`[DEBUG] Finished processInParallel, allArticles size: ${allArticles.length}. Merging all articles...`);
-      console.time("FinalMerge");
       const merged = mergeArticles(allArticles);
-      console.timeEnd("FinalMerge");
-      console.log(`[DEBUG] Final merge complete, ${merged.length} articles. Saving to localStorage...`);
-      console.time("LocalStorageSave");
       setArticles(merged);
-      const jsonStr = JSON.stringify(merged);
-      console.log(`[DEBUG] Saving to localStorage, size: ${jsonStr.length} bytes`);
-      localStorage.setItem('extracted_articles', jsonStr);
-      console.timeEnd("LocalStorageSave");
+      localStorage.setItem('extracted_articles', JSON.stringify(merged));
       
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
@@ -759,30 +705,38 @@ function NewspaperLayoutContent() {
     onArticleParsed?: (article: Article) => void,
     metadataPageNum?: number
   ): Promise<Article[]> => {
-    if (!pdfDoc) return [];
-
+    // This function is now mostly a wrapper for the API call for single page extraction
     try {
-      const page = await pdfDoc.getPage(docPageNum);
+      const file = files[currentFileIndex];
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('pageNumber', docPageNum.toString());
+      formData.append('fileName', fileName);
+      formData.append('metadataPageNum', (metadataPageNum ?? docPageNum).toString());
+
+      const response = await fetch('/api/process-pdf', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to process PDF');
+      }
+
+      const data = await response.json();
+      const extractedArticles = data.articles || [];
       
-      // 1. Hybrid Layout Analysis (Heuristic)
-      console.time("HLATime");
-      const { zones } = await parseNewspaperLayoutHybrid(page);
-      console.timeEnd("HLATime");
+      setHlaZones(data.zones || []);
       
-      setHlaZones(zones);
-      
-      // 2. Semantic Extraction (Gemini 3 Flash - Multimodal)
-      // Use metadataPageNum if provided, otherwise docPageNum
-      const finalPageNum = metadataPageNum ?? docPageNum;
-      const extractedArticles = await extractArticlesHybrid(zones, finalPageNum, fileName, image, onArticleParsed);
+      if (onArticleParsed) {
+        extractedArticles.forEach((article: Article) => onArticleParsed(article));
+      }
       
       return extractedArticles;
     } catch (error: any) {
       console.error("Error extracting articles:", error);
-      if (error instanceof QuotaExhaustedError || error?.message?.includes('Thành thật xin lỗi')) {
-        throw error;
-      }
-      return [];
+      throw error;
     }
   };
 

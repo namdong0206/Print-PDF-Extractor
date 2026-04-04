@@ -453,8 +453,8 @@ const sessionState = {
 function initializeSession() {
   if (sessionState.isInitialized) return;
   
-  const defaultApiKeyStr = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
-  const customApiKeysStr = process.env.NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS || "";
+  const defaultApiKeyStr = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
+  const customApiKeysStr = process.env.CUSTOM_GEMINI_API_KEYS || process.env.NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS || "";
   
   let apiKeys: string[] = [];
   
