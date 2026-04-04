@@ -548,6 +548,11 @@ export async function extractArticlesHybrid(
   11. PHÂN BIỆT CÁC BÀI BÁO ĐỘC LẬP: Nếu trong JSON có nhiều tiêu đề lớn (Headline) khác nhau, hãy tách chúng thành các bài báo riêng biệt. KHÔNG gộp nội dung của bài báo này vào bài báo khác, đặc biệt là các bài có tiêu đề gần giống nhau nhưng là hai bài độc lập (ví dụ: bài tường thuật hội nghị và bài phát biểu tại hội nghị).
   12. TÁCH BIỆT TÁC GIẢ VÀ CHÚ THÍCH ẢNH: Tuyệt đối không để tên tác giả hoặc chú thích ảnh (caption) lẫn vào trong mảng \`content\`. Hãy trích xuất riêng tên tác giả vào trường \`author\` và chú thích ảnh vào trường \`imageCaption\`. Nếu không có, để là "null".
   13. BẢO TOÀN ĐOẠN VĂN: Tuyệt đối không gộp tất cả các đoạn văn thành một khối duy nhất. Mỗi đoạn văn (paragraph) trong bài báo gốc phải được tách thành một phần tử riêng biệt trong mảng \`content\`. Hãy dựa vào dấu hiệu thụt lùi đầu dòng (indentation) hoặc khoảng cách giữa các khối chữ để nhận biết và ngắt đoạn chính xác.
+  14. TỐI ƯU HÓA JSON: Trả về JSON theo cấu trúc CSV-like: { "f": ["t", "a", "l", "c", "s", "i"], "d": [ ["Tiêu đề", "Tác giả", "Sapo", "Đoạn 1|Đoạn 2|Đoạn 3", "Xem trang", "Chú thích"] ] }. 
+      - "f": Danh sách tên trường rút gọn (t=title, a=author, l=lead, c=content, s=seePage, i=imageCaption).
+      - "d": Mảng các bài báo, mỗi bài báo là một mảng các giá trị tương ứng với "f".
+      - Trong trường "c", các đoạn văn phải được nối với nhau bằng ký tự "|".
+      - Trả về JSON minified (không có khoảng trắng/xuống dòng thừa).
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
@@ -597,22 +602,23 @@ export async function extractArticlesHybrid(
               thinkingLevel: model === "gemini-3.1-pro-preview" ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL 
             },
             responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  author: { type: Type.STRING },
-                  lead: { type: Type.STRING },
-                  content: { 
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                  },
-                  seePage: { type: Type.STRING },
-                  imageCaption: { type: Type.STRING }
+              type: Type.OBJECT,
+              properties: {
+                f: { 
+                  type: Type.ARRAY, 
+                  items: { type: Type.STRING },
+                  description: "Danh sách tên trường rút gọn: ['t', 'a', 'l', 'c', 's', 'i'] tương ứng với title, author, lead, content, seePage, imageCaption"
                 },
-                required: ["title", "content"]
-              }
+                d: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                    description: "Mảng dữ liệu bài báo theo thứ tự trong 'f'. Lưu ý: 'c' (content) là các đoạn văn nối với nhau bằng ký tự '|'."
+                  }
+                }
+              },
+              required: ["f", "d"]
             },
           },
         });
@@ -625,35 +631,54 @@ export async function extractArticlesHybrid(
           if (chunk.text) {
             fullText += chunk.text;
             
-            const parsedObjects = extractCompleteObjects(fullText);
-            
-            for (let i = 0; i < parsedObjects.length; i++) {
-              const art = parsedObjects[i];
-              const id = `${fileName}-${pageNumber}-${i}`;
-              
-              if (!emittedIds.has(id)) {
-                emittedIds.add(id);
+            try {
+              const root = JSON.parse(fullText);
+              if (root && root.f && Array.isArray(root.d)) {
+                const fields = root.f as string[];
+                const data = root.d as any[][];
                 
-                const article: Article = {
-                  id,
-                  title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
-                  author: art.author && art.author !== 'null' ? art.author : "",
-                  lead: art.lead && art.lead !== 'null' ? art.lead : "",
-                  content: (Array.isArray(art.content) ? art.content : [])
-                    .map((p: string) => p.trim())
-                    .filter((p: string) => p.length > 0 && p !== 'null'),
-                  imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
-                  seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
-                  pageNumbers: [pageNumber],
-                  fileName: fileName,
-                  articleRegionId: ""
-                };
-                
-                finalArticles.push(article);
-                if (onArticleParsed) {
-                  onArticleParsed(article);
+                const tIdx = fields.indexOf('t');
+                const aIdx = fields.indexOf('a');
+                const lIdx = fields.indexOf('l');
+                const cIdx = fields.indexOf('c');
+                const sIdx = fields.indexOf('s');
+                const iIdx = fields.indexOf('i');
+
+                for (let i = 0; i < data.length; i++) {
+                  const row = data[i];
+                  const id = `${fileName}-${pageNumber}-${i}`;
+                  
+                  if (!emittedIds.has(id)) {
+                    emittedIds.add(id);
+                    
+                    const rawContent = row[cIdx] || "";
+                    const contentArray = typeof rawContent === 'string' 
+                      ? rawContent.split('|').map(p => p.trim()).filter(p => p.length > 0)
+                      : [];
+
+                    const article: Article = {
+                      id,
+                      title: row[tIdx] && row[tIdx] !== 'null' ? row[tIdx] : "Không có tiêu đề",
+                      author: row[aIdx] && row[aIdx] !== 'null' ? row[aIdx] : "",
+                      lead: row[lIdx] && row[lIdx] !== 'null' ? row[lIdx] : "",
+                      content: contentArray,
+                      imageCaption: row[iIdx] && row[iIdx] !== 'null' ? row[iIdx] : "",
+                      seePage: row[sIdx] && row[sIdx] !== 'null' ? row[sIdx] : "",
+                      pageNumbers: [pageNumber],
+                      fileName: fileName,
+                      articleRegionId: ""
+                    };
+                    
+                    finalArticles.push(article);
+                    if (onArticleParsed) {
+                      onArticleParsed(article);
+                    }
+                  }
                 }
               }
+            } catch (e) {
+              // Partial JSON, ignore until complete or use a more robust parser if needed
+              // For streaming, we might need a more incremental approach, but for now let's try full parse
             }
           }
         }

@@ -305,6 +305,14 @@ function NewspaperLayoutContent() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (pdf) {
+        pdf.destroy().catch((e: any) => console.error("Error destroying pdf:", e));
+      }
+    };
+  }, [pdf]);
+
+  useEffect(() => {
     if (selectedArticle && articleDetailRef.current) {
       articleDetailRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -369,6 +377,24 @@ function NewspaperLayoutContent() {
     setIsExtracting(false);
     
     // Bắt đầu phiên làm việc mới với file đầu tiên
+    try {
+      const uploadRes = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileUrl: newFiles[0].name, userId: 'user123' }),
+      });
+      const uploadData = await uploadRes.json();
+      if (uploadRes.ok) {
+        await fetch('/api/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId: uploadData.taskId }),
+        });
+      }
+    } catch (e) {
+      console.error("API Error:", e);
+    }
+    
     await loadFile(newFiles[0], true);
   };
 
@@ -525,23 +551,15 @@ function NewspaperLayoutContent() {
     setSelectedFiles(newSelection);
   };
 
-  const processInParallel = async (indices: number[], concurrency: number = 8) => {
+  const processInParallel = async (indices: number[], concurrency: number = 2) => {
     const results: Article[] = [];
     let currentIndex = 0;
     let quotaError: any = null;
     
     const handleArticleParsed = (article: Article) => {
-      setArticles(prev => {
-        const merged = mergeArticles([...prev, article]);
-        
-        // Find the merged version of this article to save to Firestore
-        const mergedArticle = merged.find(a => isSimilarTitle(a.title, article.title));
-        if (mergedArticle) {
-          setDoc(doc(db, 'articles', mergedArticle.id), mergedArticle).catch(e => console.error("Error saving article:", e));
-        }
-        
-        return merged;
-      });
+      // Find the article to save to Firestore
+      console.log(`[DEBUG] Saving article to Firestore: ${article.title}`);
+      setDoc(doc(db, 'articles', article.id), article).catch(e => console.error("Error saving article:", e));
     };
 
     const processNext = async (): Promise<void> => {
@@ -555,10 +573,11 @@ function NewspaperLayoutContent() {
       const pdfjs = pdfjsRef.current;
       if (!pdfjs) return;
       
+      let pdfDoc: any = null;
       try {
         const arrayBuffer = await file.arrayBuffer();
         const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
-        const pdfDoc = await loadingTask.promise;
+        pdfDoc = await loadingTask.promise;
         // Always get page 1 of the current file
         const page = await pdfDoc.getPage(1);
         
@@ -578,8 +597,17 @@ function NewspaperLayoutContent() {
         if (context) {
           await page.render({ canvasContext: context, viewport: renderViewport }).promise;
           const image = canvas.toDataURL('image/webp', 0.8);
+          // Memory cleanup
+          canvas.width = 0;
+          canvas.height = 0;
+          
           // Pass 1 as the document page number, but index + 1 as the metadata page number
+          console.time(`ProcessFile-${file.name}`);
           const fileArticles = await handleExtractArticles(pdfDoc, image, 1, file.name, handleArticleParsed, index + 1);
+          console.timeEnd(`ProcessFile-${file.name}`);
+          console.time(`IntermediateMerge-${file.name}`);
+          setArticles(prev => mergeArticles([...prev, ...fileArticles]));
+          console.timeEnd(`IntermediateMerge-${file.name}`);
           results.push(...fileArticles);
         }
       } catch (error: any) {
@@ -591,6 +619,15 @@ function NewspaperLayoutContent() {
           }
         }
       } finally {
+        if (pdfDoc) {
+          try {
+            console.time(`DestroyPDF-${file.name}`);
+            await pdfDoc.destroy();
+            console.timeEnd(`DestroyPDF-${file.name}`);
+          } catch (e) {
+            console.error("Error destroying pdfDoc:", e);
+          }
+        }
         setProcessingFileIndices(prev => {
           const next = new Set(prev);
           next.delete(index);
@@ -609,6 +646,7 @@ function NewspaperLayoutContent() {
     }
     
     await Promise.all(workers);
+    console.log(`[DEBUG] processInParallel returning ${results.length} articles`);
     if (quotaError) {
       quotaError.partialArticles = results; // Attach all results gathered so far
       throw quotaError;
@@ -651,7 +689,8 @@ function NewspaperLayoutContent() {
           localStorage.setItem('extracted_articles', JSON.stringify(merged));
           setViewMode('articles');
         }
-        alert(error.message);
+        setToastMessage(error.message);
+        setTimeout(() => setToastMessage(null), 5000);
       } else {
         console.error("Lỗi trong quá trình trích xuất:", error);
       }
@@ -675,9 +714,17 @@ function NewspaperLayoutContent() {
       );
 
       const allArticles = await processInParallel(sortedIndices);
+      console.log(`[DEBUG] Finished processInParallel, allArticles size: ${allArticles.length}. Merging all articles...`);
+      console.time("FinalMerge");
       const merged = mergeArticles(allArticles);
+      console.timeEnd("FinalMerge");
+      console.log(`[DEBUG] Final merge complete, ${merged.length} articles. Saving to localStorage...`);
+      console.time("LocalStorageSave");
       setArticles(merged);
-      localStorage.setItem('extracted_articles', JSON.stringify(merged));
+      const jsonStr = JSON.stringify(merged);
+      console.log(`[DEBUG] Saving to localStorage, size: ${jsonStr.length} bytes`);
+      localStorage.setItem('extracted_articles', jsonStr);
+      console.timeEnd("LocalStorageSave");
       
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
