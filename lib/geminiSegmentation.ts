@@ -31,12 +31,11 @@ export const segmentContentParagraphs = async (
   
   // 2. Call Gemini
   const FALLBACK_MODELS = [
-    "gemini-3-flash-preview",
+    "gemini-3.1-pro-preview",
+    "gemini-2.5-pro",
     "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-8b",
-    "gemini-2.5-pro",
-    "gemini-3.1-pro-preview"
+    "gemini-2.5-flash-8b"
   ];
 
   let response;
@@ -58,7 +57,7 @@ export const segmentContentParagraphs = async (
             }
           },
           {
-            text: "Analyze the provided image of a newspaper article content region. Identify the start coordinates (x, y) of each paragraph. Return the result as a minified JSON array of arrays: [[x1, y1], [x2, y2], ...], relative to the cropped image."
+            text: "Analyze the provided image of a newspaper article content region. Identify the start coordinates (x, y) of each paragraph. Return the result as a JSON array of objects with 'x' and 'y' properties, relative to the cropped image."
           }
         ],
         config: {
@@ -66,8 +65,12 @@ export const segmentContentParagraphs = async (
           responseSchema: {
             type: Type.ARRAY,
             items: {
-              type: Type.ARRAY,
-              items: { type: Type.NUMBER }
+              type: Type.OBJECT,
+              properties: {
+                x: { type: Type.NUMBER },
+                y: { type: Type.NUMBER }
+              },
+              required: ["x", "y"]
             }
           }
         }
@@ -110,8 +113,7 @@ export const segmentContentParagraphs = async (
 
   if (!response || !response.text) throw new Error("All fallback models failed or no response from Gemini");
 
-  const rawParagraphs = JSON.parse(response.text || '[]');
-  const paragraphs = rawParagraphs.map((p: any) => ({ x: p[0], y: p[1] }));
+  const paragraphs = JSON.parse(response.text || '[]');
   
   // 3. Match paragraphs with contentItems (fuzzy matching)
   // Map paragraphs to the nearest content item

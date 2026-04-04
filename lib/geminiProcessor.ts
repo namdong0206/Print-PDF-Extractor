@@ -14,26 +14,16 @@ export interface TextBlock {
   ind?: boolean; // is_indented
 }
 
-export interface ArticleMedia {
-  type: 'image';
-  base64: string;
-  caption?: string;
-}
-
 export interface Article {
   id: string;
   articleRegionId: string;
   title: string;
   author: string;
-  lead?: string;
   content: string[];
   imageCaption: string;
   seePage: string;
   pageNumbers: number[];
   fileName?: string;
-  container_box?: { x: number; y: number; width: number; height: number };
-  warning_blocks?: any[];
-  media?: ArticleMedia[];
 }
 
 export class QuotaExhaustedError extends Error {
@@ -72,44 +62,22 @@ const getLongestCommonSubstringLen = (s1: string, s2: string): number => {
 
 // Hàm tính toán độ tương đồng của tiêu đề (so sánh trên toàn bộ chuỗi)
 export const getTitleSimilarity = (t1: string, t2: string) => {
-  const cleanSuffixes = (s: string) => s.replace(/\(?(tiếp theo|xem tiếp|tiếp từ|trang \d+)\)?/g, "").trim();
-  const s1 = cleanSuffixes(normalize(t1));
-  const s2 = cleanSuffixes(normalize(t2));
-  
+  const s1 = normalize(t1);
+  const s2 = normalize(t2);
   if (s1 === s2) return 1;
   
   const minLen = Math.min(s1.length, s2.length);
-  const maxLen = Math.max(s1.length, s2.length);
-  if (minLen < 10) return s1 === s2 ? 1 : 0;
+  if (minLen < 10) return s1 === s2 ? 1 : 0; // Tiêu đề quá ngắn thì yêu cầu khớp chính xác
 
+  // Tìm chuỗi con chung dài nhất giữa 2 tiêu đề
   const lcsLen = getLongestCommonSubstringLen(s1, s2);
-  return lcsLen / maxLen;
+  
+  return lcsLen / minLen;
 };
 
-// Hàm kiểm tra độ tương đồng phần đầu (ít nhất 85% của chuỗi dài, hoặc 95% chuỗi ngắn)
+// Hàm kiểm tra độ tương đồng phần đầu (ít nhất 80%)
 export const isSimilarTitle = (t1: string, t2: string) => {
-  const cleanSuffixes = (s: string) => s.replace(/\(?(tiếp theo|xem tiếp|tiếp từ|trang \d+)\)?/g, "").trim();
-  const s1 = cleanSuffixes(normalize(t1));
-  const s2 = cleanSuffixes(normalize(t2));
-  
-  if (s1 === s2) return true;
-  
-  const minLen = Math.min(s1.length, s2.length);
-  const maxLen = Math.max(s1.length, s2.length);
-  if (minLen < 10) return false;
-
-  const lcsLen = getLongestCommonSubstringLen(s1, s2);
-  
-  if (lcsLen / maxLen >= 0.85) return true;
-
-  if (lcsLen / minLen >= 0.95) {
-    const lengthDiff = maxLen - minLen;
-    if (lengthDiff <= 15 || lengthDiff <= maxLen * 0.2) {
-      return true;
-    }
-  }
-
-  return false;
+  return getTitleSimilarity(t1, t2) >= 0.8;
 };
 
 export function mergeArticles(articles: Article[]): Article[] {
@@ -442,19 +410,20 @@ function extractCompleteObjects(jsonString: string): any[] {
   return objects;
 }
 
-// State to persist across calls in the same session
-const sessionState = {
-  apiKeys: [] as string[],
-  currentKeyIndex: 0,
-  currentModelIndex: 0,
-  isInitialized: false
-};
-
-function initializeSession() {
-  if (sessionState.isInitialized) return;
+/**
+ * Bước 2 & 3: Gọi API Gemini để xử lý bài báo (Hybrid: HLA Zones + Text)
+ */
+export async function extractArticlesHybrid(
+  zones: HLAZone[],
+  pageNumber: number,
+  fileName: string,
+  base64Image?: string,
+  onArticleParsed?: (article: Article) => void
+): Promise<Article[]> {
+  console.log("--- [DEBUG] extractArticlesHybrid called ---");
   
-  const defaultApiKeyStr = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
-  const customApiKeysStr = process.env.CUSTOM_GEMINI_API_KEYS || process.env.NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS || "";
+  const defaultApiKeyStr = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
+  const customApiKeysStr = process.env.NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS || "";
   
   let apiKeys: string[] = [];
   
@@ -473,37 +442,25 @@ function initializeSession() {
   }
 
   // Đẩy các key mặc định của AI Studio (thường bắt đầu bằng AIzaSyD8) xuống cuối danh sách
+  // để ưu tiên sử dụng key của người dùng trước. Lưu ý: Mọi key Google đều bắt đầu bằng AIzaSy
+  // nên ta chỉ check chuỗi đặc trưng của key mặc định.
   apiKeys.sort((a, b) => {
     const isDefaultA = a.startsWith('AIzaSyD8');
     const isDefaultB = b.startsWith('AIzaSyD8');
+    
+    // Nếu cả 2 đều là default hoặc cả 2 đều không phải default thì giữ nguyên thứ tự
     if (isDefaultA === isDefaultB) return 0;
+    // Nếu A là default thì đẩy A xuống dưới (trả về 1)
     return isDefaultA ? 1 : -1;
   });
-
-  sessionState.apiKeys = apiKeys;
-  sessionState.isInitialized = true;
-  console.log(`[DEBUG] Session initialized with ${apiKeys.length} keys:`, apiKeys.map(k => k.substring(0, 8) + '...'));
-}
-
-/**
- * Bước 2 & 3: Gọi API Gemini để xử lý bài báo (Hybrid: HLA Zones + Text)
- */
-export async function extractArticlesHybrid(
-  zones: HLAZone[],
-  pageNumber: number,
-  fileName: string,
-  base64Image?: string,
-  onArticleParsed?: (article: Article) => void
-): Promise<Article[]> {
-  console.log("--- [DEBUG] extractArticlesHybrid called ---");
-  
-  initializeSession();
-  const { apiKeys } = sessionState;
 
   if (apiKeys.length === 0) {
     throw new Error("No valid API keys found. Please configure NEXT_PUBLIC_CUSTOM_GEMINI_API_KEYS or NEXT_PUBLIC_GEMINI_API_KEY.");
   }
   
+  // Log danh sách key (đã che) để debug
+  console.log(`[DEBUG] Đã nạp ${apiKeys.length} API keys:`, apiKeys.map(k => k.substring(0, 8) + '...'));
+
   // Làm sạch dữ liệu gửi đi: Loại bỏ header/footer của trang khác và chỉ giữ lại zone bài báo
   // Bao gồm cả zone 'unknown' để tránh bỏ sót nội dung
   const cleanedZones = zones
@@ -528,31 +485,21 @@ export async function extractArticlesHybrid(
   }));
 
   const jsonPayload = JSON.stringify(optimizedZones);
-  console.log(`[DEBUG] JSON Payload size: ${(new Blob([jsonPayload]).size / 1024).toFixed(2)} KB (Zones: ${cleanedZones.length})`);
-  // console.log(`[DEBUG] JSON Payload:`, jsonPayload);
+  console.log(`Kích thước gửi: ${(new Blob([jsonPayload]).size / 1024).toFixed(2)} KB (Zones: ${cleanedZones.length})`);
 
   const prompt = `
   Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất và sắp xếp lại nội dung thành các bài báo hoàn chỉnh từ JSON zones.
   
   QUY TẮC QUAN TRỌNG:
   1. KHÔNG tóm tắt, KHÔNG sửa nội dung, KHÔNG bỏ sót bất kỳ đoạn văn nào thuộc về bài báo.
-  2. Gộp Sapo/Tít phụ vào Content. Sapo thường là đoạn văn có font chữ lớn hơn hoặc in đậm, nằm ngay dưới hoặc bên cạnh tiêu đề chính.
-  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang). Tuy nhiên, CẨN THẬN không nhầm lẫn đoạn văn đầu tiên của bài báo với Header.
-  4. Giữ nguyên tiêu đề bài báo. KHÔNG tự ý thêm dấu hai chấm (:) hay bất kỳ ký tự nào vào tiêu đề hoặc nội dung.
-  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác. Lưu ý rằng bài báo có thể có bố cục phức tạp, ví dụ: cột nội dung đầu tiên có thể bắt đầu ngang hàng với tiêu đề chính hoặc thậm chí nằm phía trên tiêu đề chính trong một số trường hợp.
+  2. Gộp Sapo/Tít phụ vào Content.
+  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
+  4. Giữ nguyên tiêu đề bài báo.
+  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác.
   6. Nếu một đoạn văn trông giống Caption nhưng chứa nội dung dẫn dắt câu chuyện, hãy giữ lại trong Content.
-  7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo. Tuyệt đối không bỏ qua đoạn văn đầu tiên của bài báo.
+  7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
   8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
   9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
-  10. Tít phụ (Sub-headlines) nằm trong cột nội dung phải được giữ nguyên vị trí trong mảng content, không được đưa lên làm tiêu đề chính.
-  11. PHÂN BIỆT CÁC BÀI BÁO ĐỘC LẬP: Nếu trong JSON có nhiều tiêu đề lớn (Headline) khác nhau, hãy tách chúng thành các bài báo riêng biệt. KHÔNG gộp nội dung của bài báo này vào bài báo khác, đặc biệt là các bài có tiêu đề gần giống nhau nhưng là hai bài độc lập (ví dụ: bài tường thuật hội nghị và bài phát biểu tại hội nghị).
-  12. TÁCH BIỆT TÁC GIẢ VÀ CHÚ THÍCH ẢNH: Tuyệt đối không để tên tác giả hoặc chú thích ảnh (caption) lẫn vào trong mảng \`content\`. Hãy trích xuất riêng tên tác giả vào trường \`author\` và chú thích ảnh vào trường \`imageCaption\`. Nếu không có, để là "null".
-  13. BẢO TOÀN ĐOẠN VĂN: Tuyệt đối không gộp tất cả các đoạn văn thành một khối duy nhất. Mỗi đoạn văn (paragraph) trong bài báo gốc phải được tách thành một phần tử riêng biệt trong mảng \`content\`. Hãy dựa vào dấu hiệu thụt lùi đầu dòng (indentation) hoặc khoảng cách giữa các khối chữ để nhận biết và ngắt đoạn chính xác.
-  14. TỐI ƯU HÓA JSON: Trả về JSON theo cấu trúc CSV-like: { "f": ["t", "a", "l", "c", "s", "i"], "d": [ ["Tiêu đề", "Tác giả", "Sapo", "Đoạn 1|Đoạn 2|Đoạn 3", "Xem trang", "Chú thích"] ] }. 
-      - "f": Danh sách tên trường rút gọn (t=title, a=author, l=lead, c=content, s=seePage, i=imageCaption).
-      - "d": Mảng các bài báo, mỗi bài báo là một mảng các giá trị tương ứng với "f".
-      - Trong trường "c", các đoạn văn phải được nối với nhau bằng ký tự "|".
-      - Trả về JSON minified (không có khoảng trắng/xuống dòng thừa).
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
@@ -561,9 +508,9 @@ export async function extractArticlesHybrid(
   console.time("GeminiAPITime");
   
   const modelsToTry = [
+    "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3.1-pro-preview"
+    "gemini-3.1-flash-lite-preview"
   ];
 
   let finalArticles: Article[] = [];
@@ -583,15 +530,11 @@ export async function extractArticlesHybrid(
     contents.push({ parts: [{ text: prompt }] });
   }
 
-  for (let k = sessionState.currentKeyIndex; k < apiKeys.length; k++) {
-    const apiKey = apiKeys[k];
-    const startM = (k === sessionState.currentKeyIndex) ? sessionState.currentModelIndex : 0;
-    
-    for (let m = startM; m < modelsToTry.length; m++) {
-      const model = modelsToTry[m];
+  for (const apiKey of apiKeys) {
+    for (const model of modelsToTry) {
       const ai = new GoogleGenAI({ apiKey });
       try {
-        console.log(`Đang thử model: ${model} với key: ${apiKey.substring(0, 8)}... (KeyIndex: ${k}, ModelIndex: ${m})`);
+        console.log(`Đang thử model: ${model} với key: ${apiKey.substring(0, 8)}...`);
         const responseStream = await ai.models.generateContentStream({
           model: model,
           contents: contents,
@@ -602,23 +545,21 @@ export async function extractArticlesHybrid(
               thinkingLevel: model === "gemini-3.1-pro-preview" ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL 
             },
             responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                f: { 
-                  type: Type.ARRAY, 
-                  items: { type: Type.STRING },
-                  description: "Danh sách tên trường rút gọn: ['t', 'a', 'l', 'c', 's', 'i'] tương ứng với title, author, lead, content, seePage, imageCaption"
-                },
-                d: {
-                  type: Type.ARRAY,
-                  items: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  author: { type: Type.STRING },
+                  content: { 
                     type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                    description: "Mảng dữ liệu bài báo theo thứ tự trong 'f'. Lưu ý: 'c' (content) là các đoạn văn nối với nhau bằng ký tự '|'."
-                  }
-                }
-              },
-              required: ["f", "d"]
+                    items: { type: Type.STRING }
+                  },
+                  seePage: { type: Type.STRING },
+                  imageCaption: { type: Type.STRING }
+                },
+                required: ["title", "content"]
+              }
             },
           },
         });
@@ -631,61 +572,69 @@ export async function extractArticlesHybrid(
           if (chunk.text) {
             fullText += chunk.text;
             
-            try {
-              const root = JSON.parse(fullText);
-              if (root && root.f && Array.isArray(root.d)) {
-                const fields = root.f as string[];
-                const data = root.d as any[][];
+            const parsedObjects = extractCompleteObjects(fullText);
+            
+            for (let i = 0; i < parsedObjects.length; i++) {
+              const art = parsedObjects[i];
+              const id = `${fileName}-${pageNumber}-${i}`;
+              
+              if (!emittedIds.has(id)) {
+                emittedIds.add(id);
                 
-                const tIdx = fields.indexOf('t');
-                const aIdx = fields.indexOf('a');
-                const lIdx = fields.indexOf('l');
-                const cIdx = fields.indexOf('c');
-                const sIdx = fields.indexOf('s');
-                const iIdx = fields.indexOf('i');
+                const article: Article = {
+                  id,
+                  title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
+                  author: art.author && art.author !== 'null' ? art.author : "",
+                  content: (Array.isArray(art.content) ? art.content : [])
+                    .map((p: string) => p.trim())
+                    .filter((p: string) => p.length > 0 && p !== 'null'),
+                  imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
+                  seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
+                  pageNumbers: [pageNumber],
+                  fileName: fileName,
+                  articleRegionId: ""
+                };
 
-                for (let i = 0; i < data.length; i++) {
-                  const row = data[i];
-                  const id = `${fileName}-${pageNumber}-${i}`;
+                // 1. Kiểm tra trùng lặp chú thích ảnh
+                if (article.imageCaption && article.content.length > 0) {
+                  const firstPara = article.content[0];
+                  const normalizedCaption = normalize(article.imageCaption);
+                  const normalizedFirstPara = normalize(firstPara);
                   
-                  if (!emittedIds.has(id)) {
-                    emittedIds.add(id);
-                    
-                    const rawContent = row[cIdx] || "";
-                    const contentArray = typeof rawContent === 'string' 
-                      ? rawContent.split('|').map(p => p.trim()).filter(p => p.length > 0)
-                      : [];
-
-                    const article: Article = {
-                      id,
-                      title: row[tIdx] && row[tIdx] !== 'null' ? row[tIdx] : "Không có tiêu đề",
-                      author: row[aIdx] && row[aIdx] !== 'null' ? row[aIdx] : "",
-                      lead: row[lIdx] && row[lIdx] !== 'null' ? row[lIdx] : "",
-                      content: contentArray,
-                      imageCaption: row[iIdx] && row[iIdx] !== 'null' ? row[iIdx] : "",
-                      seePage: row[sIdx] && row[sIdx] !== 'null' ? row[sIdx] : "",
-                      pageNumbers: [pageNumber],
-                      fileName: fileName,
-                      articleRegionId: ""
-                    };
-                    
-                    finalArticles.push(article);
-                    if (onArticleParsed) {
-                      onArticleParsed(article);
-                    }
+                  // Nếu chú thích ảnh trùng với đoạn đầu nội dung
+                  if (normalizedCaption === normalizedFirstPara || normalizedFirstPara.includes(normalizedCaption)) {
+                    article.content.shift(); // Loại bỏ đoạn đầu nội dung
                   }
                 }
+
+                // 2. Tách chú thích ảnh ẩn trong đoạn đầu nội dung (nếu còn nội dung)
+                if (article.content.length > 0) {
+                  const firstPara = article.content[0].trim();
+                  const captionRegex = /\(Ảnh[:\s].*\)\.?$/i;
+                  
+                  // Kiểm tra xem có phải là một câu và có dạng (Ảnh ...)
+                  const isSingleSentence = firstPara.split(/[.!?](?=\s|$)/).filter(s => s.trim().length > 0).length <= 1;
+                  
+                  if (isSingleSentence && captionRegex.test(firstPara)) {
+                    // Tách chú thích ảnh
+                    if (article.imageCaption) {
+                      article.imageCaption += " | " + firstPara;
+                    } else {
+                      article.imageCaption = firstPara;
+                    }
+                    article.content.shift(); // Loại bỏ đoạn đầu nội dung
+                  }
+                }
+                
+                finalArticles.push(article);
+                if (onArticleParsed) {
+                  onArticleParsed(article);
+                }
               }
-            } catch (e) {
-              // Partial JSON, ignore until complete or use a more robust parser if needed
-              // For streaming, we might need a more incremental approach, but for now let's try full parse
             }
           }
         }
         
-        // Lưu lại trạng thái đang hoạt động tốt
-        sessionState.currentKeyIndex = k;
-        sessionState.currentModelIndex = m;
         success = true;
         break; // Thoát khỏi vòng lặp model nếu thành công
       } catch (error: any) {
@@ -706,17 +655,12 @@ export async function extractArticlesHybrid(
     
     if (success) {
       break; // Thoát khỏi vòng lặp key nếu thành công
-    } else {
-      // Nếu hết model của key này mà vẫn chưa thành công, reset model index về 0 cho key tiếp theo
-      sessionState.currentModelIndex = 0;
     }
   }
 
   console.timeEnd("GeminiAPITime");
 
   if (!success) {
-    sessionState.currentKeyIndex = 0;
-    sessionState.currentModelIndex = 0;
     throw new QuotaExhaustedError("Thành thật xin lỗi! Hiện đã hết quota Gemini để xử lý. Xin chờ đến hôm sau mình làm tiếp nhé!", finalArticles);
   }
 

@@ -43,24 +43,8 @@ export function processArticleContent(blocks: TextBlock[]): string[] {
 
     // A block is indented if its x is significantly greater than the baseX of the current column
     const isIndented = block.x > baseX + 10;
-    
-    // Detect new paragraph based on vertical gap
-    let isLargeGap = false;
-    if (i > 0) {
-      const prevBlock = filteredBlocks[i-1];
-      const verticalGap = block.y - (prevBlock.y + prevBlock.fs);
-      // If gap is more than 1.5 times the font size, it's likely a new paragraph
-      isLargeGap = verticalGap > block.fs * 1.5;
-    }
 
-    // Detect new paragraph based on font style change (e.g. from bold to normal)
-    let isStyleChange = false;
-    if (i > 0) {
-      const prevBlock = filteredBlocks[i-1];
-      isStyleChange = prevBlock.b !== block.b || Math.abs(prevBlock.fs - block.fs) > 2;
-    }
-
-    if ((isIndented || isLargeGap || isStyleChange) && currentParagraph) {
+    if (isIndented && currentParagraph) {
       // Start a new paragraph
       paragraphs.push(currentParagraph.trim());
       currentParagraph = text;

@@ -1,4 +1,4 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun, AlignmentType } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { Article } from './geminiProcessor';
@@ -33,15 +33,6 @@ const getSafeFilename = (title: string) => {
     .substring(0, 50) || 'bai_bao';
 };
 
-const getImageDimensions = (base64: string): Promise<{width: number, height: number}> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.width, height: img.height });
-    img.onerror = reject;
-    img.src = base64;
-  });
-};
-
 export const generateWordDocument = async (article: Article): Promise<Blob> => {
   const children: Paragraph[] = [];
 
@@ -69,66 +60,6 @@ export const generateWordDocument = async (article: Article): Promise<Blob> => {
     );
   }
 
-  // Media
-  if (article.media && article.media.length > 0) {
-    for (const media of article.media) {
-      if (media.type === 'image' && media.base64) {
-        try {
-          const base64Data = media.base64.split(',')[1];
-          if (base64Data) {
-            const dims = await getImageDimensions(media.base64);
-            const uint8Array = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-            
-            // Max width for Word document is roughly 600px
-            const maxWidth = 600;
-            let finalWidth = dims.width;
-            let finalHeight = dims.height;
-            
-            if (dims.width > maxWidth) {
-              const ratio = maxWidth / dims.width;
-              finalWidth = maxWidth;
-              finalHeight = dims.height * ratio;
-            }
-
-            children.push(
-              new Paragraph({
-                children: [
-                  new ImageRun({
-                    data: uint8Array,
-                    transformation: {
-                      width: finalWidth,
-                      height: finalHeight,
-                    },
-                    type: "jpg",
-                  }),
-                ],
-                spacing: { after: 100 },
-                alignment: AlignmentType.CENTER,
-              })
-            );
-            
-            if (media.caption) {
-              children.push(
-                new Paragraph({
-                  children: [
-                    new TextRun({
-                      text: media.caption,
-                      italics: true,
-                    }),
-                  ],
-                  spacing: { after: 200 },
-                  alignment: AlignmentType.CENTER,
-                })
-              );
-            }
-          }
-        } catch (e) {
-          console.error("Error adding image to docx:", e);
-        }
-      }
-    }
-  }
-
   // Content
   article.content.forEach((para) => {
     children.push(
@@ -139,8 +70,8 @@ export const generateWordDocument = async (article: Article): Promise<Blob> => {
     );
   });
 
-  // Image Caption (legacy, if media is not present)
-  if ((!article.media || article.media.length === 0) && article.imageCaption && article.imageCaption !== 'null') {
+  // Image Caption
+  if (article.imageCaption && article.imageCaption !== 'null') {
     children.push(
       new Paragraph({
         children: [
