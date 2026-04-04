@@ -59,7 +59,7 @@ export class HLAService {
     });
 
     // 6. Gom các block cùng nhãn trong cùng một zone để tối ưu hóa dữ liệu
-    this.mergeBlocksInZones(zones, vectorData.lines);
+    this.mergeBlocksInZones(zones);
 
     return zones;
   }
@@ -172,21 +172,10 @@ export class HLAService {
     return { x, y, width: maxX - x, height: maxY - y };
   }
 
-  private isSeparatedByLine(b1: HLABlock, b2: HLABlock, lines: VectorLine[]): boolean {
-    // Kiểm tra xem có đường kẻ dọc nào nằm giữa hai block không
-    return lines.some(line => 
-      line.type === 'V' &&
-      line.x1 > Math.min(b1.bbox.x + b1.bbox.width, b2.bbox.x + b2.bbox.width) &&
-      line.x1 < Math.max(b1.bbox.x, b2.bbox.x) &&
-      line.y1 < Math.max(b1.bbox.y + b1.bbox.height, b2.bbox.y + b2.bbox.height) &&
-      line.y2 > Math.min(b1.bbox.y, b2.bbox.y)
-    );
-  }
-
   /**
    * Gom các block cùng nhãn nằm cạnh nhau trong một zone
    */
-  private mergeBlocksInZones(zones: HLAZone[], lines: VectorLine[]) {
+  private mergeBlocksInZones(zones: HLAZone[]) {
     zones.forEach(zone => {
       if (zone.blocks.length <= 1) return;
 
@@ -196,18 +185,15 @@ export class HLAService {
       for (let i = 1; i < zone.blocks.length; i++) {
         const next = zone.blocks[i];
 
-        // Điều kiện gom: Cùng nhãn, khoảng cách dọc gần nhau, không cách quá xa ngang, và không bị ngăn cách bởi đường kẻ
+        // Điều kiện gom: Cùng nhãn, khoảng cách dọc gần nhau
         const sameLabel = current.label === next.label;
         const closeVertical = Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < 15;
-        const horizontalGap = Math.abs(next.bbox.x - current.bbox.x);
-        const isFarHorizontal = horizontalGap > 30;
-        const separatedByLine = this.isSeparatedByLine(current, next, lines);
         
-        // Headline thường có thể gom rộng hơn
+        // Headline thường có thể gom rộng hơn (tăng lên 40pt để bắt các tiêu đề lớn nhiều dòng)
         const isHeadline = current.label === 'Headline';
         const verticalThreshold = isHeadline ? 40 : 15;
 
-        if (sameLabel && Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < verticalThreshold && !isFarHorizontal && !separatedByLine) {
+        if (sameLabel && Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < verticalThreshold) {
           // Nếu block tiếp theo có thụt lề, hoặc khoảng cách dọc lớn hơn bình thường (nhưng vẫn trong ngưỡng gom),
           // ta ngắt dòng bằng \n để giữ ranh giới đoạn văn.
           const isNewParagraph = next.isIndented || Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) > (current.fontSize * 0.8);
@@ -433,7 +419,7 @@ export class HLAService {
             const overlapX = Math.max(0, Math.min(block.bbox.x + block.bbox.width, colX2) - Math.max(block.bbox.x, colX1));
             const minWidth = Math.min(block.bbox.width, colX2 - colX1);
             
-            if (overlapX > minWidth * 0.5) {
+            if (overlapX > minWidth * 0.4) {
               col.push(block);
               placed = true;
               break;
@@ -490,7 +476,7 @@ export class HLAService {
         const bestGap = sortedGaps[0];
         
         // Chỉ cắt nếu gap đủ rộng hoặc có đường kẻ phân tách
-        if (bestGap.width > 10) {
+        if (bestGap.width > 4) {
           const leftBlocks = zone.blocks.filter(b => b.bbox.x + b.bbox.width <= bestGap.start + 3);
           const rightBlocks = zone.blocks.filter(b => b.bbox.x >= bestGap.start + bestGap.width - 3);
           
@@ -518,7 +504,7 @@ export class HLAService {
         const bestGap = hGaps.sort((a, b) => b.width - a.width)[0];
         
         // Ngưỡng cắt ngang linh hoạt hơn
-        if (bestGap.width > 8) {
+        if (bestGap.width > 3) {
           const topBlocks = zone.blocks.filter(b => b.bbox.y + b.bbox.height <= bestGap.start + 1);
           const bottomBlocks = zone.blocks.filter(b => b.bbox.y >= bestGap.start + bestGap.width - 1);
 
@@ -727,10 +713,9 @@ export class HLAService {
           } else {
             block.label = 'Content';
           }
-        } else if (block.fontSize < this.baseFontSize - 2) {
+        } else if (block.fontSize < this.baseFontSize - 1) {
           block.label = 'Caption';
         } else {
-          // Mọi block còn lại có text đều là Content
           block.label = 'Content';
         }
       });

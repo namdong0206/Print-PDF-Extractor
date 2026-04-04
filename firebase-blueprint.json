@@ -14,32 +14,12 @@
         "imageCaption": { "type": "string" }
       },
       "required": ["id", "title", "content"]
-    },
-    "Task": {
-      "title": "Task",
-      "description": "Represents a PDF processing task",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "processing", "completed", "failed"] },
-        "fileUrl": { "type": "string" },
-        "result": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" },
-        "error": { "type": "string" },
-        "userId": { "type": "string" }
-      },
-      "required": ["id", "status", "fileUrl", "createdAt", "updatedAt", "userId"]
     }
   },
   "firestore": {
     "/articles/{articleId}": {
       "schema": { "$ref": "Article" },
       "description": "Collection of articles"
-    },
-    "/tasks/{taskId}": {
-      "schema": { "$ref": "Task" },
-      "description": "Collection of PDF processing tasks"
     }
   }
 }

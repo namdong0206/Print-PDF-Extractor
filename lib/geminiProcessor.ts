@@ -113,9 +113,7 @@ export const isSimilarTitle = (t1: string, t2: string) => {
 };
 
 export function mergeArticles(articles: Article[]): Article[] {
-  const startTime = performance.now();
   const merged: Article[] = [];
-  console.log(`[DEBUG] mergeArticles starting with ${articles.length} articles`);
   
   const cleanContent = (content: string[]) => {
     const cues = [
@@ -289,10 +287,6 @@ export function mergeArticles(articles: Article[]): Article[] {
     }
   });
 
-  const endTime = performance.now();
-  if (endTime - startTime > 100) {
-    console.warn(`[PERF] mergeArticles took ${Math.round(endTime - startTime)}ms for ${articles.length} articles`);
-  }
   return merged;
 }
 
@@ -399,15 +393,14 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
   }
 }
 
-function extractCompleteObjects(jsonString: string, startIndex: number = 0): { objects: any[], lastIndex: number } {
+function extractCompleteObjects(jsonString: string): any[] {
   const objects: any[] = [];
   let depth = 0;
   let inString = false;
   let escapeNext = false;
-  let currentObjStart = -1;
-  let lastIndex = startIndex;
+  let startIndex = -1;
 
-  for (let i = startIndex; i < jsonString.length; i++) {
+  for (let i = 0; i < jsonString.length; i++) {
     const char = jsonString[i];
 
     if (escapeNext) {
@@ -428,26 +421,25 @@ function extractCompleteObjects(jsonString: string, startIndex: number = 0): { o
     if (!inString) {
       if (char === '{') {
         if (depth === 0) {
-          currentObjStart = i;
+          startIndex = i;
         }
         depth++;
       } else if (char === '}') {
         depth--;
-        if (depth === 0 && currentObjStart !== -1) {
+        if (depth === 0 && startIndex !== -1) {
           try {
-            const objStr = jsonString.substring(currentObjStart, i + 1);
+            const objStr = jsonString.substring(startIndex, i + 1);
             objects.push(JSON.parse(objStr));
-            lastIndex = i + 1;
           } catch (e) {
-            // Ignore parse errors
+            // Ignore parse errors for partial/invalid objects
           }
-          currentObjStart = -1;
+          startIndex = -1;
         }
       }
     }
   }
 
-  return { objects, lastIndex };
+  return objects;
 }
 
 // State to persist across calls in the same session
@@ -544,33 +536,24 @@ export async function extractArticlesHybrid(
   
   QUY TẮC QUAN TRỌNG:
   1. KHÔNG tóm tắt, KHÔNG sửa nội dung, KHÔNG bỏ sót bất kỳ đoạn văn nào thuộc về bài báo.
-  2. Tách biệt rõ ràng các thành phần:
-     - Tiêu đề (t): Tiêu đề chính của bài báo.
-     - Tác giả (a): Tên tác giả (nếu có).
-     - Chỉ dẫn chuyển trang (sp): Các chỉ dẫn như "(Xem tiếp trang 5)", "(Tiếp theo trang 1)".
-     - Chú thích ảnh (ic): Chú thích cho ảnh.
-     - Sapo (l): Đoạn văn dẫn dắt, thường nằm dưới tiêu đề.
-     - Nội dung (c): Toàn bộ phần thân bài báo.
-     - Zone ID (zid): BẮT BUỘC phải lấy đúng ID của zone chứa tiêu đề bài báo từ dữ liệu đầu vào.
-  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
+  2. Gộp Sapo/Tít phụ vào Content. Sapo thường là đoạn văn có font chữ lớn hơn hoặc in đậm, nằm ngay dưới hoặc bên cạnh tiêu đề chính.
+  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang). Tuy nhiên, CẨN THẬN không nhầm lẫn đoạn văn đầu tiên của bài báo với Header.
   4. Giữ nguyên tiêu đề bài báo. KHÔNG tự ý thêm dấu hai chấm (:) hay bất kỳ ký tự nào vào tiêu đề hoặc nội dung.
-  5. RÀNG BUỘC VỊ TRÍ: Mỗi bài báo trích xuất PHẢI gắn liền với đúng zoneId của nó. KHÔNG ĐƯỢC lấy nội dung từ zone này đưa vào bài báo của zone khác.
-  6. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
-  7. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn.
-  8. Tít phụ (Sub-headlines) nằm trong cột nội dung phải được giữ nguyên vị trí trong mảng content, không được đưa lên làm tiêu đề chính.
-  9. PHÂN BIỆT CÁC BÀI BÁO ĐỘC LẬP: Nếu trong JSON có nhiều tiêu đề lớn (Headline) khác nhau, hãy tách chúng thành các bài báo riêng biệt.
-  10. TỐI ƯU DUNG LƯỢNG JSON (BẮT BUỘC):
-      - Trả về JSON thu gọn (minified).
-      - Sử dụng các key viết tắt: t (title), a (author), l (lead/sapo), c (content), ic (imageCaption), sp (seePage), zid (zoneId).
-      - Bỏ qua hoàn toàn các trường a, l, ic, sp khỏi object nếu không có dữ liệu.
-      - Trường nội dung (c) phải là một chuỗi duy nhất, các đoạn văn được phân tách bằng chuỗi ||| (ví dụ: Đoạn 1|||Đoạn 2). KHÔNG dùng mảng (array) cho content.
+  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác. Lưu ý rằng bài báo có thể có bố cục phức tạp, ví dụ: cột nội dung đầu tiên có thể bắt đầu ngang hàng với tiêu đề chính hoặc thậm chí nằm phía trên tiêu đề chính trong một số trường hợp.
+  6. Nếu một đoạn văn trông giống Caption nhưng chứa nội dung dẫn dắt câu chuyện, hãy giữ lại trong Content.
+  7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo. Tuyệt đối không bỏ qua đoạn văn đầu tiên của bài báo.
+  8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
+  9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
+  10. Tít phụ (Sub-headlines) nằm trong cột nội dung phải được giữ nguyên vị trí trong mảng content, không được đưa lên làm tiêu đề chính.
+  11. PHÂN BIỆT CÁC BÀI BÁO ĐỘC LẬP: Nếu trong JSON có nhiều tiêu đề lớn (Headline) khác nhau, hãy tách chúng thành các bài báo riêng biệt. KHÔNG gộp nội dung của bài báo này vào bài báo khác, đặc biệt là các bài có tiêu đề gần giống nhau nhưng là hai bài độc lập (ví dụ: bài tường thuật hội nghị và bài phát biểu tại hội nghị).
+  12. TÁCH BIỆT TÁC GIẢ VÀ CHÚ THÍCH ẢNH: Tuyệt đối không để tên tác giả hoặc chú thích ảnh (caption) lẫn vào trong mảng \`content\`. Hãy trích xuất riêng tên tác giả vào trường \`author\` và chú thích ảnh vào trường \`imageCaption\`. Nếu không có, để là "null".
+  13. BẢO TOÀN ĐOẠN VĂN: Tuyệt đối không gộp tất cả các đoạn văn thành một khối duy nhất. Mỗi đoạn văn (paragraph) trong bài báo gốc phải được tách thành một phần tử riêng biệt trong mảng \`content\`. Hãy dựa vào dấu hiệu thụt lùi đầu dòng (indentation) hoặc khoảng cách giữa các khối chữ để nhận biết và ngắt đoạn chính xác.
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
   `;
 
-  const timerName = `GeminiAPI-${fileName}-Page${pageNumber}`;
-  console.time(timerName);
+  console.time("GeminiAPITime");
   
   const modelsToTry = [
     "gemini-3-flash-preview",
@@ -604,7 +587,6 @@ export async function extractArticlesHybrid(
       const ai = new GoogleGenAI({ apiKey });
       try {
         console.log(`Đang thử model: ${model} với key: ${apiKey.substring(0, 8)}... (KeyIndex: ${k}, ModelIndex: ${m})`);
-        
         const responseStream = await ai.models.generateContentStream({
           model: model,
           contents: contents,
@@ -619,15 +601,17 @@ export async function extractArticlesHybrid(
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  t: { type: Type.STRING },
-                  a: { type: Type.STRING },
-                  l: { type: Type.STRING },
-                  c: { type: Type.STRING },
-                  sp: { type: Type.STRING },
-                  ic: { type: Type.STRING },
-                  zid: { type: Type.STRING }
+                  title: { type: Type.STRING },
+                  author: { type: Type.STRING },
+                  lead: { type: Type.STRING },
+                  content: { 
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING }
+                  },
+                  seePage: { type: Type.STRING },
+                  imageCaption: { type: Type.STRING }
                 },
-                required: ["t", "c", "zid"]
+                required: ["title", "content"]
               }
             },
           },
@@ -636,85 +620,44 @@ export async function extractArticlesHybrid(
         let fullText = "";
         const emittedIds = new Set<string>();
         finalArticles = []; // Reset for each model attempt
-        let lastParsedIndex = 0;
-        let jsonDepth = 0;
-        let inString = false;
-        let escapeNext = false;
 
         for await (const chunk of responseStream) {
-          const text = chunk.text;
-          if (text) {
-            fullText += text;
+          if (chunk.text) {
+            fullText += chunk.text;
             
-            // Theo dõi độ sâu của JSON để biết khi nào mảng [ ] kết thúc
-            for (let i = 0; i < text.length; i++) {
-              const char = text[i];
-              if (escapeNext) {
-                escapeNext = false;
-                continue;
-              }
-              if (char === '\\') {
-                escapeNext = true;
-                continue;
-              }
-              if (char === '"') {
-                inString = !inString;
-                continue;
-              }
-              if (!inString) {
-                if (char === '[') jsonDepth++;
-                else if (char === ']') jsonDepth--;
-              }
-            }
-
-            // Tối ưu: Chỉ thử parse khi thấy dấu đóng ngoặc nhọn (có khả năng kết thúc 1 object)
-            if (text.includes('}')) {
-              const { objects: parsedObjects, lastIndex } = extractCompleteObjects(fullText, lastParsedIndex);
-              lastParsedIndex = lastIndex;
+            const parsedObjects = extractCompleteObjects(fullText);
+            
+            for (let i = 0; i < parsedObjects.length; i++) {
+              const art = parsedObjects[i];
+              const id = `${fileName}-${pageNumber}-${i}`;
               
-              for (let i = 0; i < parsedObjects.length; i++) {
-                const art = parsedObjects[i];
-                const id = `${fileName}-${pageNumber}-${emittedIds.size}`;
+              if (!emittedIds.has(id)) {
+                emittedIds.add(id);
                 
-                if (!emittedIds.has(id)) {
-                  emittedIds.add(id);
-                  
-                  const article: Article = {
-                    id,
-                    title: art.t && art.t !== 'null' ? art.t : "Không có tiêu đề",
-                    author: art.a && art.a !== 'null' ? art.a : "",
-                    lead: art.l && art.l !== 'null' ? art.l : "",
-                    content: (typeof art.c === 'string' ? art.c.split('|||') : [])
-                      .map((p: string) => p.trim())
-                      .filter((p: string) => p.length > 0 && p !== 'null'),
-                    imageCaption: art.ic && art.ic !== 'null' ? art.ic : "",
-                    seePage: art.sp && art.sp !== 'null' ? art.sp : "",
-                    pageNumbers: [pageNumber],
-                    fileName: fileName,
-                    articleRegionId: art.zid || ""
-                  };
-                  
-                  if (art.zid && !optimizedZones.some(z => z.id === art.zid)) {
-                    console.warn(`[ZONE MISMATCH] Bài báo "${article.title}" được gán vào zone "${art.zid}" không tồn tại.`);
-                  }
-                  
-                  finalArticles.push(article);
-                  if (onArticleParsed) {
-                    onArticleParsed(article);
-                  }
+                const article: Article = {
+                  id,
+                  title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
+                  author: art.author && art.author !== 'null' ? art.author : "",
+                  lead: art.lead && art.lead !== 'null' ? art.lead : "",
+                  content: (Array.isArray(art.content) ? art.content : [])
+                    .map((p: string) => p.trim())
+                    .filter((p: string) => p.length > 0 && p !== 'null'),
+                  imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
+                  seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
+                  pageNumbers: [pageNumber],
+                  fileName: fileName,
+                  articleRegionId: ""
+                };
+                
+                finalArticles.push(article);
+                if (onArticleParsed) {
+                  onArticleParsed(article);
                 }
               }
-            }
-
-            if (jsonDepth === 0 && fullText.trim().startsWith('[') && finalArticles.length > 0) {
-              console.log(`[DEBUG] JSON array closed for ${fileName}, finishing stream early.`);
-              console.timeLog(timerName, "Stream finished early");
-              break; 
             }
           }
         }
         
-        console.timeLog(timerName, "Exited stream loop");
         // Lưu lại trạng thái đang hoạt động tốt
         sessionState.currentKeyIndex = k;
         sessionState.currentModelIndex = m;
@@ -744,24 +687,7 @@ export async function extractArticlesHybrid(
     }
   }
 
-  // Sau khi trích xuất xong, kiểm tra trùng lặp và ghi log
-  console.timeLog(timerName, "Starting deduplication");
-  const seenParagraphs = new Map<string, string>(); // Map: paragraph -> articleId
-  finalArticles.forEach(art => {
-    art.content = art.content.filter(para => {
-      const normalized = para.trim();
-      if (seenParagraphs.has(normalized)) {
-        console.warn(`[DEDUPLICATION] Đoạn văn trùng lặp phát hiện ở bài "${art.title}" (ID: ${art.id}). Đã tồn tại trong bài "${seenParagraphs.get(normalized)}".`);
-        return false;
-      }
-      seenParagraphs.set(normalized, art.title);
-      return true;
-    });
-  });
-  console.timeLog(timerName, "Deduplication finished");
-
-  console.timeEnd(timerName);
-  console.log(`[DEBUG] extractArticlesHybrid returning ${finalArticles.length} articles for ${fileName}`);
+  console.timeEnd("GeminiAPITime");
 
   if (!success) {
     sessionState.currentKeyIndex = 0;
