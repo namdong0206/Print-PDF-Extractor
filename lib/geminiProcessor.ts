@@ -543,16 +543,17 @@ export async function extractArticlesHybrid(
      - Chú thích ảnh (ic): Chú thích cho ảnh.
      - Sapo (l): Đoạn văn dẫn dắt, thường nằm dưới tiêu đề.
      - Nội dung (c): Toàn bộ phần thân bài báo.
+     - Zone ID (zid): BẮT BUỘC phải lấy đúng ID của zone chứa tiêu đề bài báo từ dữ liệu đầu vào.
   3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
   4. Giữ nguyên tiêu đề bài báo. KHÔNG tự ý thêm dấu hai chấm (:) hay bất kỳ ký tự nào vào tiêu đề hoặc nội dung.
-  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác.
+  5. RÀNG BUỘC VỊ TRÍ: Mỗi bài báo trích xuất PHẢI gắn liền với đúng `zoneId` của nó. KHÔNG ĐƯỢC lấy nội dung từ zone này đưa vào bài báo của zone khác.
   6. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
   7. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn.
   8. Tít phụ (Sub-headlines) nằm trong cột nội dung phải được giữ nguyên vị trí trong mảng content, không được đưa lên làm tiêu đề chính.
   9. PHÂN BIỆT CÁC BÀI BÁO ĐỘC LẬP: Nếu trong JSON có nhiều tiêu đề lớn (Headline) khác nhau, hãy tách chúng thành các bài báo riêng biệt.
   10. TỐI ƯU DUNG LƯỢNG JSON (BẮT BUỘC):
       - Trả về JSON thu gọn (minified).
-      - Sử dụng các key viết tắt: t (title), a (author), l (lead/sapo), c (content), ic (imageCaption), sp (seePage).
+      - Sử dụng các key viết tắt: t (title), a (author), l (lead/sapo), c (content), ic (imageCaption), sp (seePage), zid (zoneId).
       - Bỏ qua hoàn toàn các trường a, l, ic, sp khỏi object nếu không có dữ liệu.
       - Trường nội dung (c) phải là một chuỗi duy nhất, các đoạn văn được phân tách bằng chuỗi ||| (ví dụ: Đoạn 1|||Đoạn 2). KHÔNG dùng mảng (array) cho content.
   
@@ -613,9 +614,10 @@ export async function extractArticlesHybrid(
                   l: { type: Type.STRING },
                   c: { type: Type.STRING },
                   sp: { type: Type.STRING },
-                  ic: { type: Type.STRING }
+                  ic: { type: Type.STRING },
+                  zid: { type: Type.STRING }
                 },
-                required: ["t", "c"]
+                required: ["t", "c", "zid"]
               }
             },
           },
@@ -650,8 +652,13 @@ export async function extractArticlesHybrid(
                   seePage: art.sp && art.sp !== 'null' ? art.sp : "",
                   pageNumbers: [pageNumber],
                   fileName: fileName,
-                  articleRegionId: ""
+                  articleRegionId: art.zid || ""
                 };
+                
+                // Kiểm tra xem bài báo có thuộc zone được chỉ định không
+                if (art.zid && !optimizedZones.some(z => z.id === art.zid)) {
+                  console.warn(`[ZONE MISMATCH] Bài báo "${article.title}" được gán vào zone "${art.zid}" không tồn tại.`);
+                }
                 
                 finalArticles.push(article);
                 if (onArticleParsed) {
