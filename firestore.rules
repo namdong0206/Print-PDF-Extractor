@@ -2,14 +2,26 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
+    function isAuthenticated() { return request.auth != null; }
+    function isOwner(userId) { return isAuthenticated() && request.auth.uid == userId; }
+    
+    // Validate Task data
+    function isValidTask(data) {
+      return data.keys().hasAll(['id', 'status', 'fileUrl', 'createdAt', 'updatedAt', 'userId']) &&
+             data.status in ['pending', 'processing', 'completed', 'failed'] &&
+             data.fileUrl is string &&
+             data.userId is string &&
+             data.userId == request.auth.uid;
     }
 
     // Collection: articles
     match /articles/{articleId} {
-      allow read: if true; 
-      allow write: if true; 
+      allow read, write, delete: if true;
+    }
+
+    // Collection: tasks
+    match /tasks/{taskId} {
+      allow read, write, delete: if true;
     }
   }
 }

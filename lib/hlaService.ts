@@ -419,7 +419,7 @@ export class HLAService {
             const overlapX = Math.max(0, Math.min(block.bbox.x + block.bbox.width, colX2) - Math.max(block.bbox.x, colX1));
             const minWidth = Math.min(block.bbox.width, colX2 - colX1);
             
-            if (overlapX > minWidth * 0.4) {
+            if (overlapX > minWidth * 0.5) {
               col.push(block);
               placed = true;
               break;
@@ -713,9 +713,10 @@ export class HLAService {
           } else {
             block.label = 'Content';
           }
-        } else if (block.fontSize < this.baseFontSize - 1) {
+        } else if (block.fontSize < this.baseFontSize - 2) {
           block.label = 'Caption';
         } else {
+          // Mọi block còn lại có text đều là Content
           block.label = 'Content';
         }
       });

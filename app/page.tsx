@@ -369,6 +369,24 @@ function NewspaperLayoutContent() {
     setIsExtracting(false);
     
     // Bắt đầu phiên làm việc mới với file đầu tiên
+    try {
+      const uploadRes = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileUrl: newFiles[0].name, userId: 'user123' }),
+      });
+      const uploadData = await uploadRes.json();
+      if (uploadRes.ok) {
+        await fetch('/api/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId: uploadData.taskId }),
+        });
+      }
+    } catch (e) {
+      console.error("API Error:", e);
+    }
+    
     await loadFile(newFiles[0], true);
   };
 
@@ -525,7 +543,7 @@ function NewspaperLayoutContent() {
     setSelectedFiles(newSelection);
   };
 
-  const processInParallel = async (indices: number[], concurrency: number = 8) => {
+  const processInParallel = async (indices: number[], concurrency: number = 4) => {
     const results: Article[] = [];
     let currentIndex = 0;
     let quotaError: any = null;
@@ -537,7 +555,9 @@ function NewspaperLayoutContent() {
         // Find the merged version of this article to save to Firestore
         const mergedArticle = merged.find(a => isSimilarTitle(a.title, article.title));
         if (mergedArticle) {
-          setDoc(doc(db, 'articles', mergedArticle.id), mergedArticle).catch(e => console.error("Error saving article:", e));
+          // Remove userId as authentication is not required
+          const { userId, ...articleWithoutUser } = mergedArticle;
+          setDoc(doc(db, 'articles', mergedArticle.id), articleWithoutUser).catch(e => console.error("Error saving article:", e));
         }
         
         return merged;
@@ -651,7 +671,8 @@ function NewspaperLayoutContent() {
           localStorage.setItem('extracted_articles', JSON.stringify(merged));
           setViewMode('articles');
         }
-        alert(error.message);
+        setToastMessage(error.message);
+        setTimeout(() => setToastMessage(null), 5000);
       } else {
         console.error("Lỗi trong quá trình trích xuất:", error);
       }

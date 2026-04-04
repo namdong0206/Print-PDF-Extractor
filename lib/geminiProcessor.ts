@@ -536,18 +536,25 @@ export async function extractArticlesHybrid(
   
   QUY TẮC QUAN TRỌNG:
   1. KHÔNG tóm tắt, KHÔNG sửa nội dung, KHÔNG bỏ sót bất kỳ đoạn văn nào thuộc về bài báo.
-  2. Gộp Sapo/Tít phụ vào Content. Sapo thường là đoạn văn có font chữ lớn hơn hoặc in đậm, nằm ngay dưới hoặc bên cạnh tiêu đề chính.
-  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang). Tuy nhiên, CẨN THẬN không nhầm lẫn đoạn văn đầu tiên của bài báo với Header.
+  2. Tách biệt rõ ràng các thành phần:
+     - Tiêu đề (t): Tiêu đề chính của bài báo.
+     - Tác giả (a): Tên tác giả (nếu có).
+     - Chỉ dẫn chuyển trang (sp): Các chỉ dẫn như "(Xem tiếp trang 5)", "(Tiếp theo trang 1)".
+     - Chú thích ảnh (ic): Chú thích cho ảnh.
+     - Sapo (l): Đoạn văn dẫn dắt, thường nằm dưới tiêu đề.
+     - Nội dung (c): Toàn bộ phần thân bài báo.
+  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
   4. Giữ nguyên tiêu đề bài báo. KHÔNG tự ý thêm dấu hai chấm (:) hay bất kỳ ký tự nào vào tiêu đề hoặc nội dung.
-  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác. Lưu ý rằng bài báo có thể có bố cục phức tạp, ví dụ: cột nội dung đầu tiên có thể bắt đầu ngang hàng với tiêu đề chính hoặc thậm chí nằm phía trên tiêu đề chính trong một số trường hợp.
-  6. Nếu một đoạn văn trông giống Caption nhưng chứa nội dung dẫn dắt câu chuyện, hãy giữ lại trong Content.
-  7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo. Tuyệt đối không bỏ qua đoạn văn đầu tiên của bài báo.
-  8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
-  9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
-  10. Tít phụ (Sub-headlines) nằm trong cột nội dung phải được giữ nguyên vị trí trong mảng content, không được đưa lên làm tiêu đề chính.
-  11. PHÂN BIỆT CÁC BÀI BÁO ĐỘC LẬP: Nếu trong JSON có nhiều tiêu đề lớn (Headline) khác nhau, hãy tách chúng thành các bài báo riêng biệt. KHÔNG gộp nội dung của bài báo này vào bài báo khác, đặc biệt là các bài có tiêu đề gần giống nhau nhưng là hai bài độc lập (ví dụ: bài tường thuật hội nghị và bài phát biểu tại hội nghị).
-  12. TÁCH BIỆT TÁC GIẢ VÀ CHÚ THÍCH ẢNH: Tuyệt đối không để tên tác giả hoặc chú thích ảnh (caption) lẫn vào trong mảng \`content\`. Hãy trích xuất riêng tên tác giả vào trường \`author\` và chú thích ảnh vào trường \`imageCaption\`. Nếu không có, để là "null".
-  13. BẢO TOÀN ĐOẠN VĂN: Tuyệt đối không gộp tất cả các đoạn văn thành một khối duy nhất. Mỗi đoạn văn (paragraph) trong bài báo gốc phải được tách thành một phần tử riêng biệt trong mảng \`content\`. Hãy dựa vào dấu hiệu thụt lùi đầu dòng (indentation) hoặc khoảng cách giữa các khối chữ để nhận biết và ngắt đoạn chính xác.
+  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác.
+  6. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
+  7. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn.
+  8. Tít phụ (Sub-headlines) nằm trong cột nội dung phải được giữ nguyên vị trí trong mảng content, không được đưa lên làm tiêu đề chính.
+  9. PHÂN BIỆT CÁC BÀI BÁO ĐỘC LẬP: Nếu trong JSON có nhiều tiêu đề lớn (Headline) khác nhau, hãy tách chúng thành các bài báo riêng biệt.
+  10. TỐI ƯU DUNG LƯỢNG JSON (BẮT BUỘC):
+      - Trả về JSON thu gọn (minified).
+      - Sử dụng các key viết tắt: t (title), a (author), l (lead/sapo), c (content), ic (imageCaption), sp (seePage).
+      - Bỏ qua hoàn toàn các trường a, l, ic, sp khỏi object nếu không có dữ liệu.
+      - Trường nội dung (c) phải là một chuỗi duy nhất, các đoạn văn được phân tách bằng chuỗi ||| (ví dụ: Đoạn 1|||Đoạn 2). KHÔNG dùng mảng (array) cho content.
   
   DỮ LIỆU ZONES (JSON):
   ${jsonPayload}
@@ -601,17 +608,14 @@ export async function extractArticlesHybrid(
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  title: { type: Type.STRING },
-                  author: { type: Type.STRING },
-                  lead: { type: Type.STRING },
-                  content: { 
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                  },
-                  seePage: { type: Type.STRING },
-                  imageCaption: { type: Type.STRING }
+                  t: { type: Type.STRING },
+                  a: { type: Type.STRING },
+                  l: { type: Type.STRING },
+                  c: { type: Type.STRING },
+                  sp: { type: Type.STRING },
+                  ic: { type: Type.STRING }
                 },
-                required: ["title", "content"]
+                required: ["t", "c"]
               }
             },
           },
@@ -636,14 +640,14 @@ export async function extractArticlesHybrid(
                 
                 const article: Article = {
                   id,
-                  title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
-                  author: art.author && art.author !== 'null' ? art.author : "",
-                  lead: art.lead && art.lead !== 'null' ? art.lead : "",
-                  content: (Array.isArray(art.content) ? art.content : [])
+                  title: art.t && art.t !== 'null' ? art.t : "Không có tiêu đề",
+                  author: art.a && art.a !== 'null' ? art.a : "",
+                  lead: art.l && art.l !== 'null' ? art.l : "",
+                  content: (typeof art.c === 'string' ? art.c.split('|||') : [])
                     .map((p: string) => p.trim())
                     .filter((p: string) => p.length > 0 && p !== 'null'),
-                  imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
-                  seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
+                  imageCaption: art.ic && art.ic !== 'null' ? art.ic : "",
+                  seePage: art.sp && art.sp !== 'null' ? art.sp : "",
                   pageNumbers: [pageNumber],
                   fileName: fileName,
                   articleRegionId: ""
