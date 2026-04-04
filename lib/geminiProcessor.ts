@@ -393,14 +393,15 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
   }
 }
 
-function extractCompleteObjects(jsonString: string): any[] {
+function extractCompleteObjects(jsonString: string, startIndex: number = 0): { objects: any[], lastIndex: number } {
   const objects: any[] = [];
   let depth = 0;
   let inString = false;
   let escapeNext = false;
-  let startIndex = -1;
+  let currentObjStart = -1;
+  let lastIndex = startIndex;
 
-  for (let i = 0; i < jsonString.length; i++) {
+  for (let i = startIndex; i < jsonString.length; i++) {
     const char = jsonString[i];
 
     if (escapeNext) {
@@ -421,30 +422,26 @@ function extractCompleteObjects(jsonString: string): any[] {
     if (!inString) {
       if (char === '{') {
         if (depth === 0) {
-          startIndex = i;
+          currentObjStart = i;
         }
         depth++;
       } else if (char === '}') {
         depth--;
-        if (depth === 0 && startIndex !== -1) {
+        if (depth === 0 && currentObjStart !== -1) {
           try {
-            const objStr = jsonString.substring(startIndex, i + 1);
+            const objStr = jsonString.substring(currentObjStart, i + 1);
             objects.push(JSON.parse(objStr));
+            lastIndex = i + 1;
           } catch (e) {
-            // Ignore parse errors for partial/invalid objects
+            // Ignore parse errors
           }
-          startIndex = -1;
+          currentObjStart = -1;
         }
       }
     }
-    if (depth < 0) {
-      console.error(`[DEBUG] Depth became negative: ${depth}`);
-      depth = 0;
-    }
-    // console.log(`[DEBUG] char: ${char}, depth: ${depth}, startIndex: ${startIndex}, inString: ${inString}`);
   }
 
-  return objects;
+  return { objects, lastIndex };
 }
 
 // State to persist across calls in the same session
@@ -631,19 +628,45 @@ export async function extractArticlesHybrid(
         let fullText = "";
         const emittedIds = new Set<string>();
         finalArticles = []; // Reset for each model attempt
+        let lastParsedIndex = 0;
+        let jsonDepth = 0;
+        let inString = false;
+        let escapeNext = false;
 
         for await (const chunk of responseStream) {
           const text = chunk.text;
           if (text) {
             fullText += text;
             
+            // Theo dõi độ sâu của JSON để biết khi nào mảng [ ] kết thúc
+            for (let i = 0; i < text.length; i++) {
+              const char = text[i];
+              if (escapeNext) {
+                escapeNext = false;
+                continue;
+              }
+              if (char === '\\') {
+                escapeNext = true;
+                continue;
+              }
+              if (char === '"') {
+                inString = !inString;
+                continue;
+              }
+              if (!inString) {
+                if (char === '[') jsonDepth++;
+                else if (char === ']') jsonDepth--;
+              }
+            }
+
             // Tối ưu: Chỉ thử parse khi thấy dấu đóng ngoặc nhọn (có khả năng kết thúc 1 object)
             if (text.includes('}')) {
-              const parsedObjects = extractCompleteObjects(fullText);
+              const { objects: parsedObjects, lastIndex } = extractCompleteObjects(fullText, lastParsedIndex);
+              lastParsedIndex = lastIndex;
               
               for (let i = 0; i < parsedObjects.length; i++) {
                 const art = parsedObjects[i];
-                const id = `${fileName}-${pageNumber}-${i}`;
+                const id = `${fileName}-${pageNumber}-${emittedIds.size}`;
                 
                 if (!emittedIds.has(id)) {
                   emittedIds.add(id);
@@ -673,6 +696,13 @@ export async function extractArticlesHybrid(
                   }
                 }
               }
+            }
+
+            // Short-circuit: Nếu đã quay về depth 0 (đã đóng mảng [ ]) và đã có dữ liệu
+            // (Đôi khi model sinh thêm khoảng trắng hoặc text thừa ở cuối làm stream kéo dài)
+            if (jsonDepth === 0 && fullText.trim().startsWith('[') && finalArticles.length > 0) {
+              console.log("[DEBUG] JSON array closed, finishing stream early.");
+              break; 
             }
           }
         }
