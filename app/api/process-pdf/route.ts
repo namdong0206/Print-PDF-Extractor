@@ -4,10 +4,8 @@ import { parseNewspaperLayoutHybrid } from '@/lib/hlaService';
 import { extractArticlesHybrid } from '@/lib/geminiProcessor';
 import { createCanvas } from 'canvas';
 
-// Set up the worker for Node.js
-// @ts-ignore
-import { PDFWorker } from 'pdfjs-dist/legacy/build/pdf.worker.mjs';
-pdfjs.GlobalWorkerOptions.workerSrc = PDFWorker;
+// pdfjs-dist legacy build in Node.js environment
+// No explicit workerSrc assignment needed for basic parsing
 
 export async function POST(req: NextRequest) {
   try {
