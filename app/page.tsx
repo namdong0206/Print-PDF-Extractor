@@ -549,18 +549,8 @@ function NewspaperLayoutContent() {
     let quotaError: any = null;
     
     const handleArticleParsed = (article: Article) => {
-      setArticles(prev => {
-        const merged = mergeArticles([...prev, article]);
-        
-        // Find the merged version of this article to save to Firestore
-        const mergedArticle = merged.find(a => isSimilarTitle(a.title, article.title));
-        if (mergedArticle) {
-          // Authentication is not required, save the article as is
-          setDoc(doc(db, 'articles', mergedArticle.id), mergedArticle).catch(e => console.error("Error saving article:", e));
-        }
-        
-        return merged;
-      });
+      // Find the article to save to Firestore
+      setDoc(doc(db, 'articles', article.id), article).catch(e => console.error("Error saving article:", e));
     };
 
     const processNext = async (): Promise<void> => {
@@ -597,8 +587,14 @@ function NewspaperLayoutContent() {
         if (context) {
           await page.render({ canvasContext: context, viewport: renderViewport }).promise;
           const image = canvas.toDataURL('image/webp', 0.8);
+          // Memory cleanup
+          canvas.width = 0;
+          canvas.height = 0;
+          await pdfDoc.destroy();
+          
           // Pass 1 as the document page number, but index + 1 as the metadata page number
           const fileArticles = await handleExtractArticles(pdfDoc, image, 1, file.name, handleArticleParsed, index + 1);
+          setArticles(prev => mergeArticles([...prev, ...fileArticles]));
           results.push(...fileArticles);
         }
       } catch (error: any) {
