@@ -185,15 +185,17 @@ export class HLAService {
       for (let i = 1; i < zone.blocks.length; i++) {
         const next = zone.blocks[i];
 
-        // Điều kiện gom: Cùng nhãn, khoảng cách dọc gần nhau
+        // Điều kiện gom: Cùng nhãn, khoảng cách dọc gần nhau, và không cách quá xa theo chiều ngang
         const sameLabel = current.label === next.label;
         const closeVertical = Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < 15;
+        const horizontalGap = Math.abs(next.bbox.x - current.bbox.x);
+        const isFarHorizontal = horizontalGap > 30; // Ngưỡng mới để tránh gộp khác cột/bài
         
         // Headline thường có thể gom rộng hơn (tăng lên 40pt để bắt các tiêu đề lớn nhiều dòng)
         const isHeadline = current.label === 'Headline';
         const verticalThreshold = isHeadline ? 40 : 15;
 
-        if (sameLabel && Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < verticalThreshold) {
+        if (sameLabel && Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < verticalThreshold && !isFarHorizontal) {
           // Nếu block tiếp theo có thụt lề, hoặc khoảng cách dọc lớn hơn bình thường (nhưng vẫn trong ngưỡng gom),
           // ta ngắt dòng bằng \n để giữ ranh giới đoạn văn.
           const isNewParagraph = next.isIndented || Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) > (current.fontSize * 0.8);
@@ -476,7 +478,7 @@ export class HLAService {
         const bestGap = sortedGaps[0];
         
         // Chỉ cắt nếu gap đủ rộng hoặc có đường kẻ phân tách
-        if (bestGap.width > 4) {
+        if (bestGap.width > 10) {
           const leftBlocks = zone.blocks.filter(b => b.bbox.x + b.bbox.width <= bestGap.start + 3);
           const rightBlocks = zone.blocks.filter(b => b.bbox.x >= bestGap.start + bestGap.width - 3);
           
@@ -504,7 +506,7 @@ export class HLAService {
         const bestGap = hGaps.sort((a, b) => b.width - a.width)[0];
         
         // Ngưỡng cắt ngang linh hoạt hơn
-        if (bestGap.width > 3) {
+        if (bestGap.width > 8) {
           const topBlocks = zone.blocks.filter(b => b.bbox.y + b.bbox.height <= bestGap.start + 1);
           const bottomBlocks = zone.blocks.filter(b => b.bbox.y >= bestGap.start + bestGap.width - 1);
 
