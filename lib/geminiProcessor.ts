@@ -546,7 +546,7 @@ export async function extractArticlesHybrid(
      - Zone ID (zid): BẮT BUỘC phải lấy đúng ID của zone chứa tiêu đề bài báo từ dữ liệu đầu vào.
   3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
   4. Giữ nguyên tiêu đề bài báo. KHÔNG tự ý thêm dấu hai chấm (:) hay bất kỳ ký tự nào vào tiêu đề hoặc nội dung.
-  5. RÀNG BUỘC VỊ TRÍ: Mỗi bài báo trích xuất PHẢI gắn liền với đúng `zoneId` của nó. KHÔNG ĐƯỢC lấy nội dung từ zone này đưa vào bài báo của zone khác.
+  5. RÀNG BUỘC VỊ TRÍ: Mỗi bài báo trích xuất PHẢI gắn liền với đúng zoneId của nó. KHÔNG ĐƯỢC lấy nội dung từ zone này đưa vào bài báo của zone khác.
   6. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
   7. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn.
   8. Tít phụ (Sub-headlines) nằm trong cột nội dung phải được giữ nguyên vị trí trong mảng content, không được đưa lên làm tiêu đề chính.
