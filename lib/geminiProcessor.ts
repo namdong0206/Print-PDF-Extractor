@@ -605,10 +605,6 @@ export async function extractArticlesHybrid(
       try {
         console.log(`Đang thử model: ${model} với key: ${apiKey.substring(0, 8)}... (KeyIndex: ${k}, ModelIndex: ${m})`);
         
-        // Thêm timeout cho request (ví dụ 2 phút cho mỗi lần thử)
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
-
         const responseStream = await ai.models.generateContentStream({
           model: model,
           contents: contents,
@@ -635,7 +631,7 @@ export async function extractArticlesHybrid(
               }
             },
           },
-        }, { signal: controller.signal });
+        });
 
         let fullText = "";
         const emittedIds = new Set<string>();
@@ -645,81 +641,77 @@ export async function extractArticlesHybrid(
         let inString = false;
         let escapeNext = false;
 
-        try {
-          for await (const chunk of responseStream) {
-            const text = chunk.text;
-            if (text) {
-              fullText += text;
-              
-              // Theo dõi độ sâu của JSON để biết khi nào mảng [ ] kết thúc
-              for (let i = 0; i < text.length; i++) {
-                const char = text[i];
-                if (escapeNext) {
-                  escapeNext = false;
-                  continue;
-                }
-                if (char === '\\') {
-                  escapeNext = true;
-                  continue;
-                }
-                if (char === '"') {
-                  inString = !inString;
-                  continue;
-                }
-                if (!inString) {
-                  if (char === '[') jsonDepth++;
-                  else if (char === ']') jsonDepth--;
-                }
+        for await (const chunk of responseStream) {
+          const text = chunk.text;
+          if (text) {
+            fullText += text;
+            
+            // Theo dõi độ sâu của JSON để biết khi nào mảng [ ] kết thúc
+            for (let i = 0; i < text.length; i++) {
+              const char = text[i];
+              if (escapeNext) {
+                escapeNext = false;
+                continue;
               }
+              if (char === '\\') {
+                escapeNext = true;
+                continue;
+              }
+              if (char === '"') {
+                inString = !inString;
+                continue;
+              }
+              if (!inString) {
+                if (char === '[') jsonDepth++;
+                else if (char === ']') jsonDepth--;
+              }
+            }
 
-              // Tối ưu: Chỉ thử parse khi thấy dấu đóng ngoặc nhọn (có khả năng kết thúc 1 object)
-              if (text.includes('}')) {
-                const { objects: parsedObjects, lastIndex } = extractCompleteObjects(fullText, lastParsedIndex);
-                lastParsedIndex = lastIndex;
+            // Tối ưu: Chỉ thử parse khi thấy dấu đóng ngoặc nhọn (có khả năng kết thúc 1 object)
+            if (text.includes('}')) {
+              const { objects: parsedObjects, lastIndex } = extractCompleteObjects(fullText, lastParsedIndex);
+              lastParsedIndex = lastIndex;
+              
+              for (let i = 0; i < parsedObjects.length; i++) {
+                const art = parsedObjects[i];
+                const id = `${fileName}-${pageNumber}-${emittedIds.size}`;
                 
-                for (let i = 0; i < parsedObjects.length; i++) {
-                  const art = parsedObjects[i];
-                  const id = `${fileName}-${pageNumber}-${emittedIds.size}`;
+                if (!emittedIds.has(id)) {
+                  emittedIds.add(id);
                   
-                  if (!emittedIds.has(id)) {
-                    emittedIds.add(id);
-                    
-                    const article: Article = {
-                      id,
-                      title: art.t && art.t !== 'null' ? art.t : "Không có tiêu đề",
-                      author: art.a && art.a !== 'null' ? art.a : "",
-                      lead: art.l && art.l !== 'null' ? art.l : "",
-                      content: (typeof art.c === 'string' ? art.c.split('|||') : [])
-                        .map((p: string) => p.trim())
-                        .filter((p: string) => p.length > 0 && p !== 'null'),
-                      imageCaption: art.ic && art.ic !== 'null' ? art.ic : "",
-                      seePage: art.sp && art.sp !== 'null' ? art.sp : "",
-                      pageNumbers: [pageNumber],
-                      fileName: fileName,
-                      articleRegionId: art.zid || ""
-                    };
-                    
-                    if (art.zid && !optimizedZones.some(z => z.id === art.zid)) {
-                      console.warn(`[ZONE MISMATCH] Bài báo "${article.title}" được gán vào zone "${art.zid}" không tồn tại.`);
-                    }
-                    
-                    finalArticles.push(article);
-                    if (onArticleParsed) {
-                      onArticleParsed(article);
-                    }
+                  const article: Article = {
+                    id,
+                    title: art.t && art.t !== 'null' ? art.t : "Không có tiêu đề",
+                    author: art.a && art.a !== 'null' ? art.a : "",
+                    lead: art.l && art.l !== 'null' ? art.l : "",
+                    content: (typeof art.c === 'string' ? art.c.split('|||') : [])
+                      .map((p: string) => p.trim())
+                      .filter((p: string) => p.length > 0 && p !== 'null'),
+                    imageCaption: art.ic && art.ic !== 'null' ? art.ic : "",
+                    seePage: art.sp && art.sp !== 'null' ? art.sp : "",
+                    pageNumbers: [pageNumber],
+                    fileName: fileName,
+                    articleRegionId: art.zid || ""
+                  };
+                  
+                  if (art.zid && !optimizedZones.some(z => z.id === art.zid)) {
+                    console.warn(`[ZONE MISMATCH] Bài báo "${article.title}" được gán vào zone "${art.zid}" không tồn tại.`);
+                  }
+                  
+                  finalArticles.push(article);
+                  if (onArticleParsed) {
+                    onArticleParsed(article);
                   }
                 }
               }
+            }
 
-              if (jsonDepth === 0 && fullText.trim().startsWith('[') && finalArticles.length > 0) {
-                console.log(`[DEBUG] JSON array closed for ${fileName}, finishing stream early.`);
-                console.timeLog(timerName, "Stream finished early");
-                break; 
-              }
+            if (jsonDepth === 0 && fullText.trim().startsWith('[') && finalArticles.length > 0) {
+              console.log(`[DEBUG] JSON array closed for ${fileName}, finishing stream early.`);
+              console.timeLog(timerName, "Stream finished early");
+              break; 
             }
           }
-        } finally {
-          clearTimeout(timeoutId);
         }
         
         console.timeLog(timerName, "Exited stream loop");
