@@ -20,39 +20,63 @@ export async function POST(req: NextRequest) {
     }
 
     const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    console.log(`[API] Processing PDF: ${fileName}, Page: ${pageNumber}, Size: ${uint8Array.length} bytes`);
+
     const loadingTask = pdfjs.getDocument({
-      data: arrayBuffer,
+      data: uint8Array,
       useSystemFonts: true,
       disableFontFace: true,
       cMapUrl: 'https://unpkg.com/pdfjs-dist@5.6.205/cmaps/',
       cMapPacked: true,
       standardFontDataUrl: 'https://unpkg.com/pdfjs-dist@5.6.205/standard_fonts/',
     });
+    console.log(`[API] Loading PDF document...`);
     const pdfDoc = await loadingTask.promise;
+    console.log(`[API] PDF document loaded. Total pages: ${pdfDoc.numPages}`);
     const page = await pdfDoc.getPage(pageNumber);
+    console.log(`[API] Page ${pageNumber} loaded.`);
 
     // 1. Render page to image for Gemini
     const viewport = page.getViewport({ scale: 2.0 });
+    console.log(`[API] Rendering page to canvas: ${viewport.width}x${viewport.height}`);
+    
     const canvas = createCanvas(viewport.width, viewport.height);
     const context = canvas.getContext('2d');
     
-    // @ts-ignore
-    await page.render({
-      canvasContext: context,
-      viewport: viewport,
-    }).promise;
+    try {
+      // @ts-ignore
+      await page.render({
+        canvasContext: context,
+        viewport: viewport,
+      }).promise;
+      console.log(`[API] Page rendered to canvas.`);
+    } catch (renderError: any) {
+      console.error("[API] Error rendering PDF page to canvas:", renderError);
+      throw new Error(`Failed to render PDF page: ${renderError.message}`);
+    }
     
     const imageBase64 = canvas.toDataURL('image/jpeg', 0.8);
+    console.log("[API] Canvas toDataURL complete.");
 
     // 2. Hybrid Layout Analysis (Heuristic)
     console.time(`HLATime-${fileName}-${pageNumber}`);
     const { zones } = await parseNewspaperLayoutHybrid(page);
     console.timeEnd(`HLATime-${fileName}-${pageNumber}`);
 
+    // Optimize zones for client response (remove heavy items)
+    const optimizedZonesForClient = zones.map(zone => ({
+      ...zone,
+      blocks: zone.blocks.map(block => {
+        const { items, ...rest } = block;
+        return rest;
+      })
+    }));
+
     // 3. Semantic Extraction (Gemini)
     const extractedArticles = await extractArticlesHybrid(zones, metadataPageNum, fileName, imageBase64);
 
-    return NextResponse.json({ articles: extractedArticles, zones });
+    return NextResponse.json({ articles: extractedArticles, zones: optimizedZonesForClient });
   } catch (error: any) {
     console.error("Error in process-pdf API:", error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });

@@ -564,8 +564,22 @@ function NewspaperLayoutContent() {
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to process PDF');
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to process PDF');
+          } else {
+            const errorText = await response.text();
+            console.error(`Non-JSON error response from server (${response.status}):`, errorText);
+            throw new Error(`Server error (${response.status}). Please check server logs.`);
+          }
+        }
+
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          const text = await response.text();
+          console.error("Expected JSON but received:", text.substring(0, 500));
+          throw new Error("Server returned an invalid response format. Please try again.");
         }
 
         const data = await response.json();
@@ -720,8 +734,22 @@ function NewspaperLayoutContent() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to process PDF');
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to process PDF');
+        } else {
+          const errorText = await response.text();
+          console.error(`Non-JSON error response from server (${response.status}):`, errorText);
+          throw new Error(`Server error (${response.status}). Please check server logs.`);
+        }
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error("Expected JSON but received:", text.substring(0, 500));
+        throw new Error("Server returned an invalid response format. Please try again.");
       }
 
       const data = await response.json();
@@ -756,8 +784,6 @@ function NewspaperLayoutContent() {
       default: return 'stroke-gray-400 fill-gray-400/20 text-gray-800';
     }
   };
-
-  if (!isClient) return <div className="min-h-screen bg-[#FDFCFB]" />;
 
   if (!isClient) return <div className="min-h-screen bg-[#FDFCFB]" />;
 
@@ -933,84 +959,184 @@ function NewspaperLayoutContent() {
         </div>
 
         <div className="col-span-8 flex flex-col gap-6 h-full overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-6 bg-white rounded-2xl border border-gray-200 shadow-sm" ref={articleDetailRef}>
-            {selectedArticle ? (
-              <div className="space-y-6">
-                <div className="flex flex-col gap-4">
-                  <div className="flex items-center justify-between gap-4 border-b border-gray-100 pb-4">
-                    <div className="text-sm font-medium text-gray-500">
-                      {selectedArticle.pageNumbers && selectedArticle.pageNumbers.length > 0 && (
-                        <span>Bài trang: {Array.from(new Set(selectedArticle.pageNumbers)).join(' + ')}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => exportArticleToWord(selectedArticle)}
-                        className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
-                        title="Xuất file Word (.docx)"
-                      >
-                        <FileDown size={18} />
-                        <span className="hidden md:inline">Xuất file Word</span>
-                      </button>
-                      <a 
-                        href={`/api/article/raw/${selectedArticle.id}`} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
-                        title="Mở trang riêng"
-                      >
-                        <ExternalLink size={18} />
-                        <span className="hidden md:inline">Xem trang riêng</span>
-                      </a>
-                    </div>
-                  </div>
-                  <div className="flex items-start justify-between gap-4">
-                    <h1 className="text-3xl font-serif font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
-                    <CopyButton text={selectedArticle.title} label="Tiêu đề" />
-                  </div>
-                </div>
-                {selectedArticle.author && selectedArticle.author !== 'null' && (
-                  <div className="flex items-center justify-between gap-4">
-                    <p className="text-sm font-bold text-gray-700">Tác giả: {selectedArticle.author}</p>
-                    <CopyButton text={selectedArticle.author} label="Tác giả" />
-                  </div>
-                )}
-                {selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' && (
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="text-sm text-gray-600 italic">Chú thích ảnh: {selectedArticle.imageCaption}</div>
-                    <CopyButton text={selectedArticle.imageCaption} label="Chú thích ảnh" />
-                  </div>
-                )}
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-4">
-                      {selectedArticle.content.map((para, i) => (
-                        <p key={i} className="text-gray-800 leading-relaxed text-lg">{para}</p>
-                      ))}
-                    </div>
-                    <CopyButton text={selectedArticle.content.join('\n\n')} label="Nội dung" />
-                  </div>
-                </div>
-                <div className="pt-4 border-t border-gray-200">
-                  <CopyButton 
-                    variant="square"
-                    text={[
-                      selectedArticle.title,
-                      selectedArticle.author && selectedArticle.author !== 'null' ? `Tác giả: ${selectedArticle.author}` : '',
-                      selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' ? `Chú thích ảnh: ${selectedArticle.imageCaption}` : '',
-                      ...selectedArticle.content
-                    ].filter(Boolean).join('\n\n')} 
-                    label="toàn bộ bài báo" 
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-3">
-                <Layout size={40} className="opacity-20" />
-                <p className="text-sm text-center">Chọn một bài báo từ danh sách bên trái<br/>để xem nội dung chi tiết</p>
-              </div>
-            )}
+          <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-xl w-fit">
+            <button 
+              onClick={() => setViewMode('all')}
+              className={cn(
+                "px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2",
+                viewMode === 'all' ? "bg-white text-[#F27D26] shadow-sm" : "text-gray-500 hover:text-gray-700"
+              )}
+            >
+              <Layout size={18} />
+              Trang báo
+            </button>
+            <button 
+              onClick={() => setViewMode('articles')}
+              className={cn(
+                "px-4 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2",
+                viewMode === 'articles' ? "bg-white text-[#F27D26] shadow-sm" : "text-gray-500 hover:text-gray-700"
+              )}
+            >
+              <FileText size={18} />
+              Bài báo
+            </button>
           </div>
+
+          {viewMode === 'all' ? (
+            <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm relative overflow-hidden flex flex-col">
+              <div className="flex-1 relative overflow-auto bg-gray-50 p-8 flex justify-center">
+                <div 
+                  className="relative shadow-2xl bg-white"
+                  style={{ 
+                    width: pageSize.width, 
+                    height: pageSize.height,
+                    minWidth: pageSize.width,
+                    minHeight: pageSize.height
+                  }}
+                >
+                  {pageImage && (
+                    <NextImage 
+                      src={pageImage} 
+                      alt="Page" 
+                      fill 
+                      className="object-contain"
+                      unoptimized
+                      referrerPolicy="no-referrer"
+                    />
+                  )}
+                  
+                  {hlaZones.map((zone) => (
+                    <div
+                      key={zone.id}
+                      className={cn(
+                        "absolute border-2 transition-all cursor-help group",
+                        getLabelColor(zone.type === 'article' ? 'Text Region' : 'Image Region')
+                      )}
+                      style={{
+                        left: zone.bbox.x,
+                        top: zone.bbox.y,
+                        width: zone.bbox.width,
+                        height: zone.bbox.height,
+                      }}
+                    >
+                      <div className="absolute -top-6 left-0 bg-white/90 backdrop-blur px-2 py-0.5 rounded text-[10px] font-bold border opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                        {zone.type === 'article' ? 'Vùng bài báo' : 'Vùng hình ảnh/quảng cáo'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="h-14 border-t border-gray-100 px-6 flex items-center justify-between bg-white">
+                <div className="text-sm font-medium text-gray-500">
+                  Trang {currentPage} / {numPages}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => {
+                      const next = Math.max(1, currentPage - 1);
+                      setCurrentPage(next);
+                      if (pdf) renderPage(pdf, next);
+                    }}
+                    disabled={currentPage === 1}
+                    className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-30"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const next = Math.min(numPages, currentPage + 1);
+                      setCurrentPage(next);
+                      if (pdf) renderPage(pdf, next);
+                    }}
+                    disabled={currentPage === numPages}
+                    className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-30"
+                  >
+                    <ChevronRight size={20} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto p-6 bg-white rounded-2xl border border-gray-200 shadow-sm" ref={articleDetailRef}>
+              {selectedArticle ? (
+                <div className="space-y-6">
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between gap-4 border-b border-gray-100 pb-4">
+                      <div className="text-sm font-medium text-gray-500">
+                        {selectedArticle.pageNumbers && selectedArticle.pageNumbers.length > 0 && (
+                          <span>Bài trang: {Array.from(new Set(selectedArticle.pageNumbers)).join(' + ')}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => exportArticleToWord(selectedArticle)}
+                          className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
+                          title="Xuất file Word (.docx)"
+                        >
+                          <FileDown size={18} />
+                          <span className="hidden md:inline">Xuất file Word</span>
+                        </button>
+                        <a 
+                          href={`/api/article/raw/${selectedArticle.id}`} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-[#F27D26] transition-all flex items-center gap-2 text-sm font-bold"
+                          title="Mở trang riêng"
+                        >
+                          <ExternalLink size={18} />
+                          <span className="hidden md:inline">Xem trang riêng</span>
+                        </a>
+                      </div>
+                    </div>
+                    <div className="flex items-start justify-between gap-4">
+                      <h1 className="text-3xl font-serif font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
+                      <CopyButton text={selectedArticle.title} label="Tiêu đề" />
+                    </div>
+                  </div>
+                  {selectedArticle.author && selectedArticle.author !== 'null' && (
+                    <div className="flex items-center justify-between gap-4">
+                      <p className="text-sm font-bold text-gray-700">Tác giả: {selectedArticle.author}</p>
+                      <CopyButton text={selectedArticle.author} label="Tác giả" />
+                    </div>
+                  )}
+                  {selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' && (
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="text-sm text-gray-600 italic">Chú thích ảnh: {selectedArticle.imageCaption}</div>
+                      <CopyButton text={selectedArticle.imageCaption} label="Chú thích ảnh" />
+                    </div>
+                  )}
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-4">
+                        {selectedArticle.content.map((para, i) => (
+                          <p key={i} className="text-gray-800 leading-relaxed text-lg">{para}</p>
+                        ))}
+                      </div>
+                      <CopyButton text={selectedArticle.content.join('\n\n')} label="Nội dung" />
+                    </div>
+                  </div>
+                  <div className="pt-4 border-t border-gray-200">
+                    <CopyButton 
+                      variant="square"
+                      text={[
+                        selectedArticle.title,
+                        selectedArticle.author && selectedArticle.author !== 'null' ? `Tác giả: ${selectedArticle.author}` : '',
+                        selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' ? `Chú thích ảnh: ${selectedArticle.imageCaption}` : '',
+                        ...selectedArticle.content
+                      ].filter(Boolean).join('\n\n')} 
+                      label="toàn bộ bài báo" 
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-3">
+                  <Layout size={40} className="opacity-20" />
+                  <p className="text-sm text-center">Chọn một bài báo từ danh sách bên trái<br/>để xem nội dung chi tiết</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </main>
     </div>
