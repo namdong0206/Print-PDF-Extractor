@@ -37,16 +37,18 @@ export async function POST(req: Request) {
     const jsonPayload = JSON.stringify(optimizedZones);
     
     const prompt = `
-    Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất nội dung bài báo từ JSON zones.
+    Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất và sắp xếp lại nội dung thành các bài báo hoàn chỉnh từ JSON zones.
     
-    QUY TẮC BẮT BUỘC:
-    1. Chỉ trả về JSON thuần túy theo schema. KHÔNG chào hỏi, KHÔNG giải thích, KHÔNG thêm văn bản thừa.
+    QUY TẮC QUAN TRỌNG:
+    1. KHÔNG tóm tắt, KHÔNG sửa nội dung, KHÔNG bỏ sót bất kỳ đoạn văn nào thuộc về bài báo.
     2. Gộp Sapo/Tít phụ vào Content.
-    3. Loại bỏ Header/Footer.
-    4. Giữ nguyên tiêu đề.
-    5. Trích xuất ĐẦY ĐỦ 100% văn bản.
-    6. Tìm chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)") đưa vào trường 'sp'.
-    7. Tìm Dropcap và ghép vào từ đầu tiên.
+    3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
+    4. Giữ nguyên tiêu đề bài báo.
+    5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác.
+    6. Nếu một đoạn văn trông giống Caption nhưng chứa nội dung dẫn dắt câu chuyện, hãy giữ lại trong Content.
+    7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
+    8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
+    9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
     
     DỮ LIỆU ZONES (JSON):
     ${jsonPayload}
@@ -92,17 +94,16 @@ export async function POST(req: Request) {
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    t: { type: Type.STRING, description: "Title" },
-                    a: { type: Type.STRING, description: "Author" },
-                    c: { 
+                    title: { type: Type.STRING },
+                    author: { type: Type.STRING },
+                    content: { 
                       type: Type.ARRAY,
-                      items: { type: Type.STRING },
-                      description: "Content paragraphs"
+                      items: { type: Type.STRING }
                     },
-                    sp: { type: Type.STRING, description: "See page" },
-                    ic: { type: Type.STRING, description: "Image caption" }
+                    seePage: { type: Type.STRING },
+                    imageCaption: { type: Type.STRING }
                   },
-                  required: ["t", "c"]
+                  required: ["title", "content"]
                 }
               },
             },
@@ -117,14 +118,7 @@ export async function POST(req: Request) {
           
           // Need to implement extractCompleteObjects here or import it
           // For now, assume fullText is valid JSON array as per schema
-          const parsed = JSON.parse(fullText);
-          finalArticles = parsed.map((art: any) => ({
-            title: art.t,
-            author: art.a,
-            content: art.c,
-            seePage: art.sp,
-            imageCaption: art.ic
-          }));
+          finalArticles = JSON.parse(fullText);
           
           success = true;
           break;
