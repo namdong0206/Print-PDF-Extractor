@@ -39,16 +39,17 @@ export async function POST(req: Request) {
     const prompt = `
     Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất và sắp xếp lại nội dung thành các bài báo hoàn chỉnh từ JSON zones.
     
-    QUY TẮC QUAN TRỌNG:
-    1. KHÔNG tóm tắt, KHÔNG sửa nội dung, KHÔNG bỏ sót bất kỳ đoạn văn nào thuộc về bài báo.
-    2. Gộp Sapo/Tít phụ vào Content.
-    3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
-    4. Giữ nguyên tiêu đề bài báo.
-    5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác.
-    6. Nếu một đoạn văn trông giống Caption nhưng chứa nội dung dẫn dắt câu chuyện, hãy giữ lại trong Content.
-    7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
-    8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
-    9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
+    QUY TẮC ĐỌC VÀ SẮP XẾP (BẮT BUỘC):
+    1. THỨ TỰ ƯU TIÊN THÀNH PHẦN: Tiêu đề -> Tác giả -> Chú thích ảnh -> Sapo -> Nội dung.
+    2. XỬ LÝ CÁC THÀNH PHẦN VẮT CỘT (Tiêu đề, Chú thích ảnh, Sapo): Nếu các thành phần này có chiều rộng lớn (vắt qua từ 2 cột trở lên) và nằm phía trên hoặc xen giữa các cột nội dung, BẮT BUỘC phải trích xuất và đưa vào bài báo TRƯỚC khi đọc các cột nội dung.
+    3. XỬ LÝ CÁC CỘT NỘI DUNG: Sau khi đã đọc các thành phần vắt cột, hãy đọc tất cả các cột nội dung còn lại theo thứ tự từ TRÁI sang PHẢI. Trong mỗi cột, đọc từ TRÊN xuống DƯỚI.
+    4. XỬ LÝ CÁC KHỐI VĂN BẢN GÂY NHẦM LẪN: Nếu trong cột nội dung có các dòng chữ viết hoa (trông giống tiêu đề) nhưng có độ rộng nằm gọn trong cột, BẮT BUỘC phải coi đó là một phần của nội dung và đọc theo thứ tự xuất hiện trong cột đó, KHÔNG được tách ra làm tiêu đề chính.
+    
+    QUY TẮC CHUNG:
+    - KHÔNG tóm tắt, KHÔNG sửa nội dung, KHÔNG bỏ sót bất kỳ đoạn văn nào thuộc về bài báo.
+    - Loại bỏ Header/Footer (tên báo, ngày tháng, số trang).
+    - Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)") và đưa vào trường seePage.
+    - ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn.
     
     DỮ LIỆU ZONES (JSON):
     ${jsonPayload}
