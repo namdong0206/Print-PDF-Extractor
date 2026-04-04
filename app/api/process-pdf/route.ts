@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       viewport: viewport,
     }).promise;
     
-    const imageBase64 = canvas.toDataURL('image/webp', 0.8);
+    const imageBase64 = canvas.toDataURL('image/jpeg', 0.8);
 
     // 2. Hybrid Layout Analysis (Heuristic)
     console.time(`HLATime-${fileName}-${pageNumber}`);
