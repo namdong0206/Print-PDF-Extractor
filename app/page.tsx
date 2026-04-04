@@ -558,6 +558,7 @@ function NewspaperLayoutContent() {
     
     const handleArticleParsed = (article: Article) => {
       // Find the article to save to Firestore
+      console.log(`[DEBUG] Saving article to Firestore: ${article.title}`);
       setDoc(doc(db, 'articles', article.id), article).catch(e => console.error("Error saving article:", e));
     };
 
@@ -601,8 +602,12 @@ function NewspaperLayoutContent() {
           canvas.height = 0;
           
           // Pass 1 as the document page number, but index + 1 as the metadata page number
+          console.time(`ProcessFile-${file.name}`);
           const fileArticles = await handleExtractArticles(pdfDoc, image, 1, file.name, handleArticleParsed, index + 1);
+          console.timeEnd(`ProcessFile-${file.name}`);
+          console.time(`IntermediateMerge-${file.name}`);
           setArticles(prev => mergeArticles([...prev, ...fileArticles]));
+          console.timeEnd(`IntermediateMerge-${file.name}`);
           results.push(...fileArticles);
         }
       } catch (error: any) {
@@ -616,7 +621,9 @@ function NewspaperLayoutContent() {
       } finally {
         if (pdfDoc) {
           try {
+            console.time(`DestroyPDF-${file.name}`);
             await pdfDoc.destroy();
+            console.timeEnd(`DestroyPDF-${file.name}`);
           } catch (e) {
             console.error("Error destroying pdfDoc:", e);
           }
@@ -639,6 +646,7 @@ function NewspaperLayoutContent() {
     }
     
     await Promise.all(workers);
+    console.log(`[DEBUG] processInParallel returning ${results.length} articles`);
     if (quotaError) {
       quotaError.partialArticles = results; // Attach all results gathered so far
       throw quotaError;
@@ -706,9 +714,17 @@ function NewspaperLayoutContent() {
       );
 
       const allArticles = await processInParallel(sortedIndices);
+      console.log(`[DEBUG] Finished processInParallel, allArticles size: ${allArticles.length}. Merging all articles...`);
+      console.time("FinalMerge");
       const merged = mergeArticles(allArticles);
+      console.timeEnd("FinalMerge");
+      console.log(`[DEBUG] Final merge complete, ${merged.length} articles. Saving to localStorage...`);
+      console.time("LocalStorageSave");
       setArticles(merged);
-      localStorage.setItem('extracted_articles', JSON.stringify(merged));
+      const jsonStr = JSON.stringify(merged);
+      console.log(`[DEBUG] Saving to localStorage, size: ${jsonStr.length} bytes`);
+      localStorage.setItem('extracted_articles', jsonStr);
+      console.timeEnd("LocalStorageSave");
       
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);

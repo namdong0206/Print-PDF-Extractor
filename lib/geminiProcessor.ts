@@ -113,7 +113,9 @@ export const isSimilarTitle = (t1: string, t2: string) => {
 };
 
 export function mergeArticles(articles: Article[]): Article[] {
+  const startTime = performance.now();
   const merged: Article[] = [];
+  console.log(`[DEBUG] mergeArticles starting with ${articles.length} articles`);
   
   const cleanContent = (content: string[]) => {
     const cues = [
@@ -287,6 +289,10 @@ export function mergeArticles(articles: Article[]): Article[] {
     }
   });
 
+  const endTime = performance.now();
+  if (endTime - startTime > 100) {
+    console.warn(`[PERF] mergeArticles took ${Math.round(endTime - startTime)}ms for ${articles.length} articles`);
+  }
   return merged;
 }
 
@@ -702,11 +708,13 @@ export async function extractArticlesHybrid(
             // (Đôi khi model sinh thêm khoảng trắng hoặc text thừa ở cuối làm stream kéo dài)
             if (jsonDepth === 0 && fullText.trim().startsWith('[') && finalArticles.length > 0) {
               console.log("[DEBUG] JSON array closed, finishing stream early.");
+              console.timeLog("GeminiAPITime", "Stream finished early");
               break; 
             }
           }
         }
         
+        console.timeLog("GeminiAPITime", "Exited stream loop");
         // Lưu lại trạng thái đang hoạt động tốt
         sessionState.currentKeyIndex = k;
         sessionState.currentModelIndex = m;
@@ -737,6 +745,7 @@ export async function extractArticlesHybrid(
   }
 
   // Sau khi trích xuất xong, kiểm tra trùng lặp và ghi log
+  console.timeLog("GeminiAPITime", "Starting deduplication");
   const seenParagraphs = new Map<string, string>(); // Map: paragraph -> articleId
   finalArticles.forEach(art => {
     art.content = art.content.filter(para => {
@@ -749,8 +758,10 @@ export async function extractArticlesHybrid(
       return true;
     });
   });
+  console.timeLog("GeminiAPITime", "Deduplication finished");
 
   console.timeEnd("GeminiAPITime");
+  console.log(`[DEBUG] extractArticlesHybrid returning ${finalArticles.length} articles`);
 
   if (!success) {
     sessionState.currentKeyIndex = 0;
