@@ -437,6 +437,11 @@ function extractCompleteObjects(jsonString: string): any[] {
         }
       }
     }
+    if (depth < 0) {
+      console.error(`[DEBUG] Depth became negative: ${depth}`);
+      depth = 0;
+    }
+    // console.log(`[DEBUG] char: ${char}, depth: ${depth}, startIndex: ${startIndex}, inString: ${inString}`);
   }
 
   return objects;
@@ -628,11 +633,12 @@ export async function extractArticlesHybrid(
         finalArticles = []; // Reset for each model attempt
 
         for await (const chunk of responseStream) {
+          console.log(`[DEBUG] Received chunk: ${chunk.text ? chunk.text.length : 0} chars`);
           if (chunk.text) {
             fullText += chunk.text;
             
             const parsedObjects = extractCompleteObjects(fullText);
-            
+            console.log(`[DEBUG] Parsed ${parsedObjects.length} objects`);
             for (let i = 0; i < parsedObjects.length; i++) {
               const art = parsedObjects[i];
               const id = `${fileName}-${pageNumber}-${i}`;

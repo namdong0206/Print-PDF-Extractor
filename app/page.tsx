@@ -305,6 +305,14 @@ function NewspaperLayoutContent() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (pdf) {
+        pdf.destroy().catch((e: any) => console.error("Error destroying pdf:", e));
+      }
+    };
+  }, [pdf]);
+
+  useEffect(() => {
     if (selectedArticle && articleDetailRef.current) {
       articleDetailRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -564,10 +572,11 @@ function NewspaperLayoutContent() {
       const pdfjs = pdfjsRef.current;
       if (!pdfjs) return;
       
+      let pdfDoc: any = null;
       try {
         const arrayBuffer = await file.arrayBuffer();
         const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
-        const pdfDoc = await loadingTask.promise;
+        pdfDoc = await loadingTask.promise;
         // Always get page 1 of the current file
         const page = await pdfDoc.getPage(1);
         
@@ -590,7 +599,6 @@ function NewspaperLayoutContent() {
           // Memory cleanup
           canvas.width = 0;
           canvas.height = 0;
-          await pdfDoc.destroy();
           
           // Pass 1 as the document page number, but index + 1 as the metadata page number
           const fileArticles = await handleExtractArticles(pdfDoc, image, 1, file.name, handleArticleParsed, index + 1);
@@ -606,6 +614,13 @@ function NewspaperLayoutContent() {
           }
         }
       } finally {
+        if (pdfDoc) {
+          try {
+            await pdfDoc.destroy();
+          } catch (e) {
+            console.error("Error destroying pdfDoc:", e);
+          }
+        }
         setProcessingFileIndices(prev => {
           const next = new Set(prev);
           next.delete(index);
