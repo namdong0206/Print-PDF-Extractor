@@ -39,6 +39,11 @@ export async function POST(req: Request) {
     const prompt = `
     Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất và sắp xếp lại nội dung thành các bài báo hoàn chỉnh từ JSON zones.
     
+    QUY TẮC PHÂN VÙNG BÀI BÁO (BẮT BUỘC):
+    1. CÁC VÙNG BÀI BÁO LÀ HÌNH TỨ GIÁC: Mỗi bài báo thường nằm gọn trong một hoặc nhiều khối hình tứ giác (hình vuông/chữ nhật).
+    2. RANH GIỚI SEPARATOR: Các vùng bài báo được phân cách bởi các đường kẻ (separator), khung viền hoặc các vùng màu. Tuyệt đối KHÔNG được đọc đè qua các đường separator này.
+    3. TÍNH ĐỘC LẬP: Các vùng văn bản nằm ở hai bên của một đường separator BẮT BUỘC phải được coi là thuộc các bài báo khác nhau. KHÔNG được gộp chúng lại trừ khi có bằng chứng rõ ràng về nội dung liên tục (rất hiếm khi xảy ra trên cùng một trang báo in).
+    
     QUY TẮC ĐỌC VÀ SẮP XẾP (BẮT BUỘC):
     1. THỨ TỰ ƯU TIÊN THÀNH PHẦN: Tiêu đề -> Tác giả -> Chú thích ảnh -> Sapo -> Nội dung.
     2. XỬ LÝ CÁC THÀNH PHẦN VẮT CỘT (Tiêu đề, Chú thích ảnh, Sapo): Nếu các thành phần này có chiều rộng lớn (vắt qua từ 2 cột trở lên) và nằm phía trên hoặc xen giữa các cột nội dung, BẮT BUỘC phải trích xuất và đưa vào bài báo TRƯỚC khi đọc các cột nội dung.
