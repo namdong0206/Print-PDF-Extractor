@@ -458,12 +458,9 @@ export async function extractArticlesHybrid(
   base64Image?: string,
   onArticleParsed?: (article: Article) => void
 ): Promise<Article[]> {
-  console.log("--- [DEBUG] extractArticlesHybrid called ---");
+  console.log("--- [DEBUG] extractArticlesHybrid called (calling server-side API) ---");
   
-  const apiKeys = getSortedApiKeys();
-
-  // Làm sạch dữ liệu gửi đi: Loại bỏ header/footer của trang khác và chỉ giữ lại zone bài báo
-  // Bao gồm cả zone 'unknown' để tránh bỏ sót nội dung
+  // Làm sạch dữ liệu gửi đi
   const cleanedZones = zones
     .filter(zone => zone.type === 'article' || zone.type === 'unknown')
     .map(zone => {
@@ -483,185 +480,46 @@ export async function extractArticlesHybrid(
     }))
   }));
 
-  const jsonPayload = JSON.stringify(optimizedZones);
-  console.log(`Kích thước gửi: ${(new Blob([jsonPayload]).size / 1024).toFixed(2)} KB (Zones: ${cleanedZones.length})`);
+  const response = await fetch('/api/extract-articles', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      optimizedZones,
+      pageNumber,
+      fileName,
+      base64Image
+    }),
+  });
 
-  const prompt = `
-  Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất và sắp xếp lại nội dung thành các bài báo hoàn chỉnh từ JSON zones.
-  
-  QUY TẮC QUAN TRỌNG:
-  1. KHÔNG tóm tắt, KHÔNG sửa nội dung, KHÔNG bỏ sót bất kỳ đoạn văn nào thuộc về bài báo.
-  2. Gộp Sapo/Tít phụ vào Content.
-  3. Loại bỏ Header/Footer (thường là tên báo, ngày tháng, số trang ở rìa trang).
-  4. Giữ nguyên tiêu đề bài báo.
-  5. Các thành phần trong một khối tin bài sẽ luôn được gom trong phạm vi một hình tứ giác (hình vuông hoặc hình chữ nhật). Hãy sử dụng đặc điểm không gian này để nhóm các khối văn bản chính xác.
-  6. Nếu một đoạn văn trông giống Caption nhưng chứa nội dung dẫn dắt câu chuyện, hãy giữ lại trong Content.
-  7. Đảm bảo trích xuất ĐẦY ĐỦ 100% văn bản của bài báo.
-  8. Tìm các chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)", "(Tiếp theo trang 1)") và đưa vào trường seePage.
-  9. ĐẶC BIỆT CHÚ Ý: Các bài báo thường có chữ cái in hoa rất lớn ở đầu đoạn (Dropcap). Chữ cái này có thể bị tách rời về mặt đồ họa hoặc nằm trong một block riêng biệt. Bạn BẮT BUỘC phải tìm chữ cái này và ghép nó vào đúng vị trí của từ đầu tiên trong đoạn văn. Tuyệt đối không được bỏ sót ký tự Dropcap.
-  
-  DỮ LIỆU ZONES (JSON):
-  ${jsonPayload}
-  `;
-
-  console.time("GeminiAPITime");
-  
-  const modelsToTry = [
-    "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3.1-pro-preview"
-  ];
-
-  let finalArticles: Article[] = [];
-  let success = false;
-  let lastError: any = null;
-
-  const contents: any[] = [];
-  if (base64Image) {
-    const base64Data = base64Image.split(',')[1] || base64Image;
-    contents.push({
-      parts: [
-        { inlineData: { data: base64Data, mimeType: "image/png" } },
-        { text: prompt }
-      ]
-    });
-  } else {
-    contents.push({ parts: [{ text: prompt }] });
+  if (!response.ok) {
+    throw new Error('Failed to extract articles from server');
   }
 
-  for (const apiKey of apiKeys) {
-    for (const model of modelsToTry) {
-      const ai = new GoogleGenAI({ apiKey });
-      try {
-        console.log(`Đang thử model: ${model} với key: ${apiKey.substring(0, 8)}...`);
-        const responseStream = await ai.models.generateContentStream({
-          model: model,
-          contents: contents,
-          config: {
-            temperature: 0,
-            responseMimeType: "application/json",
-            thinkingConfig: { 
-              thinkingLevel: ThinkingLevel.MINIMAL 
-            },
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  author: { type: Type.STRING },
-                  content: { 
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                  },
-                  seePage: { type: Type.STRING },
-                  imageCaption: { type: Type.STRING }
-                },
-                required: ["title", "content"]
-              }
-            },
-          },
-        });
+  const { articles } = await response.json();
 
-        let fullText = "";
-        const emittedIds = new Set<string>();
-        finalArticles = []; // Reset for each model attempt
-
-        for await (const chunk of responseStream) {
-          if (chunk.text) {
-            fullText += chunk.text;
-            
-            const parsedObjects = extractCompleteObjects(fullText);
-            
-            for (let i = 0; i < parsedObjects.length; i++) {
-              const art = parsedObjects[i];
-              const id = `${fileName}-${pageNumber}-${i}`;
-              
-              if (!emittedIds.has(id)) {
-                emittedIds.add(id);
-                
-                const article: Article = {
-                  id,
-                  title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
-                  author: art.author && art.author !== 'null' ? art.author : "",
-                  content: (Array.isArray(art.content) ? art.content : [])
-                    .map((p: string) => p.trim())
-                    .filter((p: string) => p.length > 0 && p !== 'null'),
-                  imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
-                  seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
-                  pageNumbers: [pageNumber],
-                  fileName: fileName,
-                  articleRegionId: ""
-                };
-
-                // 1. Kiểm tra trùng lặp chú thích ảnh
-                if (article.imageCaption && article.content.length > 0) {
-                  const firstPara = article.content[0];
-                  const normalizedCaption = normalize(article.imageCaption);
-                  const normalizedFirstPara = normalize(firstPara);
-                  
-                  // Nếu chú thích ảnh trùng với đoạn đầu nội dung
-                  if (normalizedCaption === normalizedFirstPara || normalizedFirstPara.includes(normalizedCaption)) {
-                    article.content.shift(); // Loại bỏ đoạn đầu nội dung
-                  }
-                }
-
-                // 2. Tách chú thích ảnh ẩn trong đoạn đầu nội dung (nếu còn nội dung)
-                if (article.content.length > 0) {
-                  const firstPara = article.content[0].trim();
-                  const captionRegex = /\(Ảnh[:\s].*\)\.?$/i;
-                  
-                  // Kiểm tra xem có phải là một câu và có dạng (Ảnh ...)
-                  const isSingleSentence = firstPara.split(/[.!?](?=\s|$)/).filter(s => s.trim().length > 0).length <= 1;
-                  
-                  if (isSingleSentence && captionRegex.test(firstPara)) {
-                    // Tách chú thích ảnh
-                    if (article.imageCaption) {
-                      article.imageCaption += " | " + firstPara;
-                    } else {
-                      article.imageCaption = firstPara;
-                    }
-                    article.content.shift(); // Loại bỏ đoạn đầu nội dung
-                  }
-                }
-                
-                finalArticles.push(article);
-                if (onArticleParsed) {
-                  onArticleParsed(article);
-                }
-              }
-            }
-          }
-        }
-        
-        success = true;
-        break; // Thoát khỏi vòng lặp model nếu thành công
-      } catch (error: any) {
-        console.error(`Lỗi với model ${model} (Key: ${apiKey.substring(0, 8)}...):`, error);
-        lastError = error;
-        
-        const isQuotaError = error?.status === 429 || error?.status === "RESOURCE_EXHAUSTED" || error?.message?.includes("429") || error?.message?.includes("quota");
-        
-        if (isQuotaError) {
-          console.log(`Model ${model} với key ${apiKey.substring(0, 8)}... hết quota, chuyển sang model tiếp theo...`);
-          continue; // Thử model tiếp theo
-        } else {
-          console.log(`Lỗi không phải do quota, chuyển sang model tiếp theo...`);
-          continue; // Thử model tiếp theo
-        }
-      }
-    }
+  // Map to Article type and add missing fields
+  const finalArticles: Article[] = articles.map((art: any, i: number) => {
+    const article: Article = {
+      id: `${fileName}-${pageNumber}-${i}`,
+      articleRegionId: "",
+      title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
+      author: art.author && art.author !== 'null' ? art.author : "",
+      content: (Array.isArray(art.content) ? art.content : [])
+        .map((p: string) => p.trim())
+        .filter((p: string) => p.length > 0 && p !== 'null'),
+      imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
+      seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
+      pageNumbers: [pageNumber],
+      fileName: fileName
+    };
     
-    if (success) {
-      break; // Thoát khỏi vòng lặp key nếu thành công
+    if (onArticleParsed) {
+      onArticleParsed(article);
     }
-  }
-
-  console.timeEnd("GeminiAPITime");
-
-  if (!success) {
-    throw new QuotaExhaustedError("Thành thật xin lỗi! Hiện đã hết quota Gemini để xử lý. Xin chờ đến hôm sau mình làm tiếp nhé!", finalArticles);
-  }
+    return article;
+  });
 
   return finalArticles;
 }
