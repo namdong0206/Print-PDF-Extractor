@@ -633,42 +633,44 @@ export async function extractArticlesHybrid(
         finalArticles = []; // Reset for each model attempt
 
         for await (const chunk of responseStream) {
-          console.log(`[DEBUG] Received chunk: ${chunk.text ? chunk.text.length : 0} chars`);
-          if (chunk.text) {
-            fullText += chunk.text;
+          const text = chunk.text;
+          if (text) {
+            fullText += text;
             
-            const parsedObjects = extractCompleteObjects(fullText);
-            console.log(`[DEBUG] Parsed ${parsedObjects.length} objects`);
-            for (let i = 0; i < parsedObjects.length; i++) {
-              const art = parsedObjects[i];
-              const id = `${fileName}-${pageNumber}-${i}`;
+            // Tối ưu: Chỉ thử parse khi thấy dấu đóng ngoặc nhọn (có khả năng kết thúc 1 object)
+            if (text.includes('}')) {
+              const parsedObjects = extractCompleteObjects(fullText);
               
-              if (!emittedIds.has(id)) {
-                emittedIds.add(id);
+              for (let i = 0; i < parsedObjects.length; i++) {
+                const art = parsedObjects[i];
+                const id = `${fileName}-${pageNumber}-${i}`;
                 
-                const article: Article = {
-                  id,
-                  title: art.t && art.t !== 'null' ? art.t : "Không có tiêu đề",
-                  author: art.a && art.a !== 'null' ? art.a : "",
-                  lead: art.l && art.l !== 'null' ? art.l : "",
-                  content: (typeof art.c === 'string' ? art.c.split('|||') : [])
-                    .map((p: string) => p.trim())
-                    .filter((p: string) => p.length > 0 && p !== 'null'),
-                  imageCaption: art.ic && art.ic !== 'null' ? art.ic : "",
-                  seePage: art.sp && art.sp !== 'null' ? art.sp : "",
-                  pageNumbers: [pageNumber],
-                  fileName: fileName,
-                  articleRegionId: art.zid || ""
-                };
-                
-                // Kiểm tra xem bài báo có thuộc zone được chỉ định không
-                if (art.zid && !optimizedZones.some(z => z.id === art.zid)) {
-                  console.warn(`[ZONE MISMATCH] Bài báo "${article.title}" được gán vào zone "${art.zid}" không tồn tại.`);
-                }
-                
-                finalArticles.push(article);
-                if (onArticleParsed) {
-                  onArticleParsed(article);
+                if (!emittedIds.has(id)) {
+                  emittedIds.add(id);
+                  
+                  const article: Article = {
+                    id,
+                    title: art.t && art.t !== 'null' ? art.t : "Không có tiêu đề",
+                    author: art.a && art.a !== 'null' ? art.a : "",
+                    lead: art.l && art.l !== 'null' ? art.l : "",
+                    content: (typeof art.c === 'string' ? art.c.split('|||') : [])
+                      .map((p: string) => p.trim())
+                      .filter((p: string) => p.length > 0 && p !== 'null'),
+                    imageCaption: art.ic && art.ic !== 'null' ? art.ic : "",
+                    seePage: art.sp && art.sp !== 'null' ? art.sp : "",
+                    pageNumbers: [pageNumber],
+                    fileName: fileName,
+                    articleRegionId: art.zid || ""
+                  };
+                  
+                  if (art.zid && !optimizedZones.some(z => z.id === art.zid)) {
+                    console.warn(`[ZONE MISMATCH] Bài báo "${article.title}" được gán vào zone "${art.zid}" không tồn tại.`);
+                  }
+                  
+                  finalArticles.push(article);
+                  if (onArticleParsed) {
+                    onArticleParsed(article);
+                  }
                 }
               }
             }
