@@ -691,6 +691,20 @@ export async function extractArticlesHybrid(
     }
   }
 
+  // Sau khi trích xuất xong, kiểm tra trùng lặp và ghi log
+  const seenParagraphs = new Map<string, string>(); // Map: paragraph -> articleId
+  finalArticles.forEach(art => {
+    art.content = art.content.filter(para => {
+      const normalized = para.trim();
+      if (seenParagraphs.has(normalized)) {
+        console.warn(`[DEDUPLICATION] Đoạn văn trùng lặp phát hiện ở bài "${art.title}" (ID: ${art.id}). Đã tồn tại trong bài "${seenParagraphs.get(normalized)}".`);
+        return false;
+      }
+      seenParagraphs.set(normalized, art.title);
+      return true;
+    });
+  });
+
   console.timeEnd("GeminiAPITime");
 
   if (!success) {
