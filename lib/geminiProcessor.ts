@@ -475,13 +475,11 @@ export async function extractArticlesHybrid(
     }).filter(zone => zone.blocks.length > 0);
 
   const optimizedZones = cleanedZones.map(zone => ({
-    id: zone.id,
     blocks: zone.blocks.map(b => ({
       t: b.text,
       fs: b.fontSize,
       b: b.isBold,
-      l: b.label,
-      ind: b.isIndented
+      l: b.label
     }))
   }));
 
@@ -543,7 +541,7 @@ export async function extractArticlesHybrid(
             temperature: 0,
             responseMimeType: "application/json",
             thinkingConfig: { 
-              thinkingLevel: model === "gemini-3.1-pro-preview" ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL 
+              thinkingLevel: ThinkingLevel.MINIMAL 
             },
             responseSchema: {
               type: Type.ARRAY,
