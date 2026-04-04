@@ -555,9 +555,8 @@ function NewspaperLayoutContent() {
         // Find the merged version of this article to save to Firestore
         const mergedArticle = merged.find(a => isSimilarTitle(a.title, article.title));
         if (mergedArticle) {
-          // Remove userId as authentication is not required
-          const { userId, ...articleWithoutUser } = mergedArticle;
-          setDoc(doc(db, 'articles', mergedArticle.id), articleWithoutUser).catch(e => console.error("Error saving article:", e));
+          // Authentication is not required, save the article as is
+          setDoc(doc(db, 'articles', mergedArticle.id), mergedArticle).catch(e => console.error("Error saving article:", e));
         }
         
         return merged;
