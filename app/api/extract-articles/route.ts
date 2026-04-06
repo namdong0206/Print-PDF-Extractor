@@ -37,17 +37,21 @@ export async function POST(req: Request) {
     const jsonPayload = JSON.stringify(optimizedZones);
     
     const prompt = `
-    Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất nội dung bài báo từ JSON zones.
-    
+    Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất nội dung bài báo từ JSON zones đã được làm sạch và nhóm theo cột.
+
     QUY TẮC BẮT BUỘC:
     1. Chỉ trả về JSON thuần túy theo schema. KHÔNG chào hỏi, KHÔNG giải thích, KHÔNG thêm văn bản thừa.
-    2. Gộp Sapo/Tít phụ vào Content.
-    3. Loại bỏ Header/Footer.
-    4. Giữ nguyên tiêu đề.
-    5. Trích xuất ĐẦY ĐỦ 100% văn bản.
-    6. Tìm chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)") đưa vào trường 'sp'.
-    7. Tìm Dropcap và ghép vào từ đầu tiên.
-    
+    2. Dữ liệu đầu vào đã được làm sạch header/footer và nhóm theo cột.
+    3. Nhiệm vụ của bạn chỉ là:
+       - Xác định Tiêu đề (Title).
+       - Xác định Tác giả (Author).
+       - Xác định Sapo (nếu có, gộp vào Content).
+       - Xác định Chú thích ảnh (Image Captions).
+       - Xác định các đoạn văn bản chính (Content paragraphs).
+       - Xác định chỉ dẫn chuyển trang (See page).
+    4. Giữ nguyên cấu trúc đoạn văn bản.
+    5. Trích xuất ĐẦY ĐỦ 100% nội dung văn bản.
+
     DỮ LIỆU ZONES (JSON):
     ${jsonPayload}
     `;

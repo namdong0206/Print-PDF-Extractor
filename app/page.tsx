@@ -509,7 +509,7 @@ function NewspaperLayoutContent() {
 
   const handleSegmentRegions = () => {
     if (boxes.length === 0) return;
-    const segmented = segmentRegions(boxes);
+    const segmented = segmentRegions(boxes, pageSize.height);
     setRegions(segmented);
     setViewMode('regions');
   };

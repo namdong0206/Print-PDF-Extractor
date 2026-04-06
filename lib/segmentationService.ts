@@ -74,11 +74,17 @@ export const groupBoxesByArticleRegion = (boxes: BoundingBox[], regions: Article
   return grouped;
 };
 
-export const segmentRegions = (boxes: BoundingBox[]): Region[] => {
+export const segmentRegions = (boxes: BoundingBox[], pageHeight: number): Region[] => {
   if (boxes.length === 0) return [];
 
   // Separate content boxes and line boxes
-  const contentBoxes = boxes.filter(b => !['Horizontal Line', 'Vertical Line'].includes(b.label));
+  // Remove header/footer (top/bottom 5% of page)
+  const headerFooterThreshold = pageHeight * 0.05;
+  const contentBoxes = boxes.filter(b => 
+    !['Horizontal Line', 'Vertical Line'].includes(b.label) &&
+    b.y > headerFooterThreshold &&
+    b.y + b.height < pageHeight - headerFooterThreshold
+  );
   const lineBoxes = boxes.filter(b => ['Horizontal Line', 'Vertical Line'].includes(b.label));
 
   // 1. Build a graph where boxes are nodes and edges exist if boxes overlap or are close,
