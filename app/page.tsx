@@ -887,6 +887,7 @@ function NewspaperLayoutContent() {
                       )}
                     >
                       <h3 className="font-serif font-bold text-sm">{article.title}</h3>
+                      {article.note && <p className="text-red-500 text-xs mt-1">⚠️ Có cảnh báo</p>}
                     </div>
                   ))}
                 </div>
@@ -933,6 +934,11 @@ function NewspaperLayoutContent() {
                   <h1 className="text-3xl font-serif font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
                   <CopyButton text={selectedArticle.title} label="Tiêu đề" />
                 </div>
+                {selectedArticle.note && (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-600 font-bold">
+                    {selectedArticle.note}
+                  </div>
+                )}
                 {selectedArticle.author && selectedArticle.author !== 'null' && (
                   <div className="flex items-center justify-between gap-4">
                     <p className="text-sm font-bold text-gray-700">Tác giả: {selectedArticle.author}</p>

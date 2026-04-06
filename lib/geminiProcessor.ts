@@ -24,6 +24,7 @@ export interface Article {
   seePage: string;
   pageNumbers: number[];
   fileName?: string;
+  note?: string;
 }
 
 export class QuotaExhaustedError extends Error {
@@ -232,6 +233,15 @@ export function mergeArticles(articles: Article[]): Article[] {
     } else {
       const newArt = { ...article };
       newArt.content = cleanContent(newArt.content);
+      
+      // Check if it's an unmatched continuation
+      const isArticleContinuation = /tiếp theo trang|tiếp từ trang|tiếp theo/i.test(article.seePage || "");
+      if (isArticleContinuation) {
+        newArt.note = "Bài không ghép được do không tìm thấy phần còn lại...";
+      } else {
+        newArt.note = newArt.note || "";
+      }
+      
       merged.push(newArt);
     }
   }
@@ -553,16 +563,25 @@ export async function extractArticlesHybrid(
       }
     }
 
+    let title = art.title && art.title !== 'null' ? art.title : "";
+    let note = art.note || "";
+
+    if (!title) {
+      title = "Bài không có tiêu đề...";
+      note = "Bài không có tiêu đề và không có chỉ dẫn ghép nối";
+    }
+
     const article: Article = {
       id: `${fileName}-${pageNumber}-${i}`,
       articleRegionId: "",
-      title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
+      title: title,
       author: author,
       content: content.filter((p: string) => p.length > 0),
       imageCaption: imageCaptions,
       seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
       pageNumbers: [pageNumber],
-      fileName: fileName
+      fileName: fileName,
+      note: note
     };
     
     if (onArticleParsed) {

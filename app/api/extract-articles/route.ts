@@ -42,15 +42,16 @@ export async function POST(req: Request) {
     QUY TẮC BẮT BUỘC:
     1. Chỉ trả về JSON thuần túy theo schema. KHÔNG chào hỏi, KHÔNG giải thích, KHÔNG thêm văn bản thừa.
     2. Dữ liệu đầu vào đã được làm sạch header/footer và nhóm theo cột.
-    3. Nhiệm vụ của bạn chỉ là:
-       - Xác định Tiêu đề (Title).
+    3. Nhiệm vụ của bạn là:
+       - Xác định Tiêu đề (Title). Nếu không có tiêu đề, hãy đặt là "Bài không có tiêu đề...".
        - Xác định Tác giả (Author).
        - Xác định Sapo (nếu có, gộp vào Content).
        - Xác định Chú thích ảnh (Image Captions).
        - Xác định các đoạn văn bản chính (Content paragraphs).
        - Xác định chỉ dẫn chuyển trang (See page).
-    4. Giữ nguyên cấu trúc đoạn văn bản.
-    5. Trích xuất ĐẦY ĐỦ 100% nội dung văn bản.
+    4. TRÍCH XUẤT TẤT CẢ các vùng có nội dung văn bản. Nếu một vùng là phần tiếp theo của bài báo khác, hãy cố gắng ghép nối thông qua ngữ cảnh hoặc chỉ dẫn chuyển trang. Nếu không thể ghép nối, hãy trích xuất nó thành một bài báo riêng.
+    5. Giữ nguyên cấu trúc đoạn văn bản.
+    6. Trích xuất ĐẦY ĐỦ 100% nội dung văn bản.
 
     DỮ LIỆU ZONES (JSON):
     ${jsonPayload}
@@ -108,7 +109,8 @@ export async function POST(req: Request) {
                       type: Type.ARRAY,
                       items: { type: Type.STRING },
                       description: "Image captions" 
-                    }
+                    },
+                    n: { type: Type.STRING, description: "Note" }
                   },
                   required: ["t", "c"]
                 }
@@ -131,7 +133,8 @@ export async function POST(req: Request) {
             author: art.a,
             content: art.c,
             seePage: art.sp,
-            imageCaption: art.ic
+            imageCaption: art.ic,
+            note: art.n || ""
           }));
           
           success = true;
