@@ -652,7 +652,8 @@ function NewspaperLayoutContent() {
         }
         alert(error.message);
       } else {
-        console.error("Lỗi trong quá trình trích xuất:", error);
+        console.error("Lỗi trong quá trình trích xuất (Selected):", error);
+        alert("Có lỗi xảy ra: " + (error.message || "Lỗi không xác định"));
       }
     } finally {
       setIsProcessing(false);
@@ -695,7 +696,8 @@ function NewspaperLayoutContent() {
         }
         alert(error.message);
       } else {
-        console.error("Lỗi trong quá trình trích xuất:", error);
+        console.error("Lỗi trong quá trình trích xuất (All):", error);
+        alert("Có lỗi xảy ra: " + (error.message || "Lỗi không xác định"));
       }
     } finally {
       setIsProcessing(false);
@@ -731,10 +733,8 @@ function NewspaperLayoutContent() {
       return extractedArticles;
     } catch (error: any) {
       console.error("Error extracting articles:", error);
-      if (error instanceof QuotaExhaustedError || error?.message?.includes('Thành thật xin lỗi')) {
-        throw error;
-      }
-      return [];
+      // Always throw the error so the caller can handle it
+      throw error;
     }
   };
 

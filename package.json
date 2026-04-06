@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.17.0",
+    "@techstark/opencv-js": "^4.12.0-release.1",
     "autoprefixer": "^10.4.27",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -27,6 +28,7 @@
     "pngjs": "^7.0.0",
     "postcss": "^8.5.8",
     "pureimage": "^0.4.18",
+    "rbush": "^4.0.1",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "tailwind-merge": "^3.5.0"
@@ -37,6 +39,7 @@
     "@types/file-saver": "^2.0.7",
     "@types/node": "^20",
     "@types/pdfjs-dist": "^2.10.377",
+    "@types/rbush": "^4.0.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "9.39.1",

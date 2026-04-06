@@ -1,12 +1,11 @@
 import * as Comlink from 'comlink';
-import { parseNewspaperLayoutHybrid } from './hlaService';
+import { analyzeLayoutData } from './hlaService';
 
 const workerApi = {
-  async processLayout(page: any) {
-    return await parseNewspaperLayoutHybrid(page);
+  async processLayoutHybrid(textItems: any[], vectorData: any, pageWidth: number, pageHeight: number) {
+    return await analyzeLayoutData(textItems, vectorData, pageWidth, pageHeight);
   },
   async processText(textBlocks: any[]) {
-    // Logic xử lý văn bản nặng ở đây
     return textBlocks;
   }
 };

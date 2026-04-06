@@ -3,6 +3,7 @@
 import React, { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Article } from '@/lib/geminiProcessor';
+import { processArticleForDisplay } from '@/lib/textProcessor';
 import { Layout, FileText, ChevronLeft, Copy, Check, FileDown } from 'lucide-react';
 import Link from 'next/link';
 import { exportArticleToWord } from '@/lib/wordExport';
@@ -30,7 +31,10 @@ function ArticleContent() {
       if (savedArticles) {
         try {
           const articles: Article[] = JSON.parse(savedArticles);
-          found = articles.find(a => a.id === id || a.title === id) || null;
+          const article = articles.find(a => a.id === id || a.title === id) || null;
+          if (article) {
+            found = processArticleForDisplay(article);
+          }
         } catch (e) {
           console.error("Error parsing saved articles", e);
         }

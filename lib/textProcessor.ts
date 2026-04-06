@@ -1,4 +1,59 @@
-import { TextBlock } from './geminiProcessor';
+import { TextBlock, Article } from './geminiProcessor';
+
+export function processArticleForDisplay(article: Article): Article {
+  let { author, content, imageCaption } = article;
+  let newContent = [...content];
+
+  // 1. Author Processing
+  if (newContent.length > 0) {
+    const firstPara = newContent[0];
+    
+    // Case 1: Author in Author field AND at start of Content
+    if (author && firstPara.toLowerCase().startsWith(author.toLowerCase())) {
+      newContent[0] = firstPara.substring(author.length).trim().replace(/^[-,: ]+/, '');
+    } 
+    // Case 2: Author only in Content
+    else if (!author) {
+      const match = firstPara.match(/^(Bài và ảnh:)\s*(.*)/i);
+      if (match) {
+        author = match[2].trim();
+        newContent[0] = firstPara.substring(match[0].length).trim();
+      }
+    }
+  }
+
+  // 2. Photo Caption Processing
+  const captionRegex = /^(Ảnh:|Ảnh)\s*(.*)/i;
+  for (let i = 0; i < newContent.length; i++) {
+    const match = newContent[i].match(captionRegex);
+    if (match) {
+      const foundCaption = match[0].trim();
+      
+      // If we don't have a caption, or this is a new one, update it
+      if (!imageCaption) {
+        imageCaption = foundCaption;
+        newContent.splice(i, 1);
+        i--; // Adjust index
+      } 
+      // If we already have a caption, and it matches, remove from content
+      else if (imageCaption.toLowerCase().includes(foundCaption.toLowerCase())) {
+        newContent.splice(i, 1);
+        i--;
+      }
+    }
+  }
+
+  // 3. Subheading Processing (ensure they are kept as paragraphs)
+  // The current structure already treats them as paragraphs. 
+  // No special action needed, just ensure they are not filtered out.
+
+  return { 
+    ...article, 
+    author, 
+    content: newContent.filter(p => p.length > 0), 
+    imageCaption 
+  };
+}
 
 export function processArticleContent(blocks: TextBlock[]): string[] {
   // 1. Remove image captions and empty blocks

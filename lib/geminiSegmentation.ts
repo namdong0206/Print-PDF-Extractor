@@ -31,11 +31,11 @@ export const segmentContentParagraphs = async (
   
   // 2. Call Gemini
   const FALLBACK_MODELS = [
-    "gemini-3.1-pro-preview",
-    "gemini-2.5-pro",
+    "gemini-3-flash-preview",
     "gemini-3.1-flash-lite-preview",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-8b"
+    "gemini-3.1-pro-preview",
+    "gemini-2.5-flash-image",
+    "gemini-3.1-flash-image-preview"
   ];
 
   let response;
@@ -47,7 +47,7 @@ export const segmentContentParagraphs = async (
   while (currentModelIndex < FALLBACK_MODELS.length) {
     const currentModel = FALLBACK_MODELS[currentModelIndex];
     try {
-      response = await ai.models.generateContent({
+      const result = await ai.models.generateContent({
         model: currentModel,
         contents: [
           {
@@ -75,24 +75,29 @@ export const segmentContentParagraphs = async (
           }
         }
       });
+      response = result;
       break; // Success
     } catch (error: any) {
+      const errorMsg = error?.message || String(error);
       const isRateLimit = error?.status === 429 || 
                           error?.status === "RESOURCE_EXHAUSTED" || 
-                          error?.message?.includes("429") || 
-                          error?.message?.includes("quota") ||
-                          error?.message?.includes("RESOURCE_EXHAUSTED");
+                          errorMsg.includes("429") || 
+                          errorMsg.includes("quota") ||
+                          errorMsg.includes("RESOURCE_EXHAUSTED") ||
+                          errorMsg.includes("Too Many Requests");
       
       const isNotFound = error?.status === 404 || 
-                         error?.message?.includes("not found") || 
-                         error?.message?.includes("is not supported");
+                         errorMsg.includes("not found") || 
+                         errorMsg.includes("is not supported");
 
       if (isRateLimit) {
         if (retries < maxRetriesPerModel) {
-          console.warn(`[${currentModel}] API rate limit hit in segmentation. Retrying in ${delay}ms... (Attempt ${retries + 1} of ${maxRetriesPerModel})`);
-          await new Promise(resolve => setTimeout(resolve, delay));
+          const retryDelay = delay + Math.random() * 1000;
+          console.warn(`[${currentModel}] API rate limit hit in segmentation. Retrying in ${Math.round(retryDelay)}ms... (Attempt ${retries + 1} of ${maxRetriesPerModel})`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
           retries++;
           delay *= 2;
+          continue;
         } else {
           console.warn(`[${currentModel}] Quota exceeded. Switching to next fallback model...`);
           currentModelIndex++;
