@@ -3,7 +3,6 @@
 import React, { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Article } from '@/lib/geminiProcessor';
-import { processArticleForDisplay } from '@/lib/textProcessor';
 import { Layout, FileText, ChevronLeft, Copy, Check, FileDown } from 'lucide-react';
 import Link from 'next/link';
 import { exportArticleToWord } from '@/lib/wordExport';
@@ -31,10 +30,7 @@ function ArticleContent() {
       if (savedArticles) {
         try {
           const articles: Article[] = JSON.parse(savedArticles);
-          const article = articles.find(a => a.id === id || a.title === id) || null;
-          if (article) {
-            found = processArticleForDisplay(article);
-          }
+          found = articles.find(a => a.id === id || a.title === id) || null;
         } catch (e) {
           console.error("Error parsing saved articles", e);
         }
@@ -137,9 +133,11 @@ function ArticleContent() {
             ))}
           </div>
 
-          {article.imageCaption && (
+          {article.imageCaption && article.imageCaption.length > 0 && (
             <div className="bg-gray-50 p-4 rounded-xl text-sm text-gray-600 italic border-l-2 border-gray-200">
-              Chú thích ảnh: {article.imageCaption}
+              {article.imageCaption.map((caption, i) => (
+                <p key={i}>Chú thích ảnh: {caption}</p>
+              ))}
             </div>
           )}
         </article>

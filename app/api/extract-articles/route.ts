@@ -29,90 +29,6 @@ function getApiKeys(): string[] {
   return apiKeys;
 }
 
-function postProcessArticles(articles: any[]) {
-  return articles.map(article => {
-    let content = Array.isArray(article.content) ? [...article.content] : [];
-    let author = article.author || "";
-    let imageCaption = article.imageCaption || "";
-
-    if (content.length > 0) {
-      // 1. Handle Author
-      let firstParagraph = content[0].trim();
-      let lastParagraph = content[content.length - 1].trim();
-      
-      if (author && firstParagraph.toLowerCase().includes(author.toLowerCase())) {
-         if (firstParagraph.length <= author.length + 15) {
-            content.shift();
-         } else {
-            const escapeRegExp = (string: string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`^\\s*${escapeRegExp(author)}[\\s\\-:,]*`, 'i');
-            content[0] = firstParagraph.replace(regex, '').trim();
-         }
-         // Update first and last paragraph after shift/modify
-         if (content.length > 0) {
-             firstParagraph = content[0].trim();
-             lastParagraph = content[content.length - 1].trim();
-         }
-      }
-      
-      // Check for "Bài và ảnh:..." if it only appears in content
-      if (content.length > 0) {
-         const authorPattern = /(?:^|\s)(Bài và ảnh|Bài, ảnh|Bài|Thực hiện|Theo)[:\s]+(.+)$/i;
-         const firstMatch = firstParagraph.match(authorPattern);
-         if (firstMatch) {
-            if (!author) author = firstMatch[0].trim();
-            content[0] = firstParagraph.replace(authorPattern, '').trim();
-            if (!content[0]) content.shift();
-         } else {
-            const lastMatch = lastParagraph.match(authorPattern);
-            if (lastMatch) {
-               if (!author) author = lastMatch[0].trim();
-               content[content.length - 1] = lastParagraph.replace(authorPattern, '').trim();
-               if (!content[content.length - 1]) content.pop();
-            }
-         }
-      }
-
-      // 2. Handle Image Caption
-      const captionPattern = /^Ảnh[:\s].+$/i;
-      const newContent = [];
-      
-      for (let i = 0; i < content.length; i++) {
-         const p = content[i].trim();
-         
-         if (imageCaption && p.toLowerCase().includes(imageCaption.toLowerCase())) {
-            if (p.length <= imageCaption.length + 15) {
-               // Prefer the original paragraph if it starts with "Ảnh" to preserve the prefix
-               if (captionPattern.test(p) && !captionPattern.test(imageCaption)) {
-                  imageCaption = p;
-               }
-               continue; 
-            }
-         }
-         
-         if (captionPattern.test(p)) {
-            if (!imageCaption) {
-               imageCaption = p;
-            } else if (!imageCaption.toLowerCase().includes(p.toLowerCase()) && !p.toLowerCase().includes(imageCaption.toLowerCase())) {
-               imageCaption += " | " + p;
-            }
-            continue; 
-         }
-         
-         newContent.push(p);
-      }
-      content = newContent;
-    }
-
-    return {
-      ...article,
-      author,
-      imageCaption,
-      content
-    };
-  });
-}
-
 export async function POST(req: Request) {
   try {
     const { optimizedZones, pageNumber, fileName, base64Image } = await req.json();
@@ -125,13 +41,12 @@ export async function POST(req: Request) {
     
     QUY TẮC BẮT BUỘC:
     1. Chỉ trả về JSON thuần túy theo schema. KHÔNG chào hỏi, KHÔNG giải thích, KHÔNG thêm văn bản thừa.
-    2. Gộp Sapo/Tít phụ vào Content. LƯU Ý QUAN TRỌNG: Trong phần nội dung thường xuất hiện các tít phụ (là các đoạn văn bản ngắn, viết hoa toàn bộ, nằm trong cột nội dung). TUYỆT ĐỐI KHÔNG xác định nhầm các tít phụ này là Headline (Tiêu đề bài báo). Hãy xử lý tít phụ như một paragraph bình thường của cột nội dung và giữ đúng thứ tự xuất hiện của nó.
-    3. Loại bỏ Header/Footer, số trang, quảng cáo.
-    4. Giữ nguyên tiêu đề chính của bài báo.
-    5. Trích xuất ĐẦY ĐỦ 100% văn bản, giữ nguyên cấu trúc đoạn văn, không tóm tắt hay viết lại.
+    2. Gộp Sapo/Tít phụ vào Content.
+    3. Loại bỏ Header/Footer.
+    4. Giữ nguyên tiêu đề.
+    5. Trích xuất ĐẦY ĐỦ 100% văn bản.
     6. Tìm chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)") đưa vào trường 'sp'.
     7. Tìm Dropcap và ghép vào từ đầu tiên.
-    8. Đọc theo thứ tự cột từ trên xuống dưới, sau đó chuyển sang cột kế tiếp.
     
     DỮ LIỆU ZONES (JSON):
     ${jsonPayload}
@@ -185,7 +100,11 @@ export async function POST(req: Request) {
                       description: "Content paragraphs"
                     },
                     sp: { type: Type.STRING, description: "See page" },
-                    ic: { type: Type.STRING, description: "Image caption" }
+                    ic: { 
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                      description: "Image captions" 
+                    }
                   },
                   required: ["t", "c"]
                 }
@@ -203,15 +122,13 @@ export async function POST(req: Request) {
           // Need to implement extractCompleteObjects here or import it
           // For now, assume fullText is valid JSON array as per schema
           const parsed = JSON.parse(fullText);
-          const mappedArticles = parsed.map((art: any) => ({
+          finalArticles = parsed.map((art: any) => ({
             title: art.t,
             author: art.a,
             content: art.c,
             seePage: art.sp,
             imageCaption: art.ic
           }));
-          
-          finalArticles = postProcessArticles(mappedArticles);
           
           success = true;
           break;

@@ -70,82 +70,21 @@ export const generateWordDocument = async (article: Article): Promise<Blob> => {
     );
   });
 
-  // Orphaned Content
-  if (article.orphanedContent && article.orphanedContent.length > 0) {
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: "--- CÁC ĐOẠN VĂN BẢN CÓ THỂ THUỘC BÀI NÀY (>= 100 KÝ TỰ) ---",
-            bold: true,
-            color: "F27D26",
-          }),
-        ],
-        spacing: { before: 400, after: 200 },
-      })
-    );
-
-    article.orphanedContent.forEach((para) => {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: para,
-              italics: true,
-              color: "8B4513",
-            }),
-          ],
-          spacing: { after: 200 },
-        })
-      );
-    });
-  }
-
-  // Recovery Content
-  if (article.recoveryContent && article.recoveryContent.length > 0) {
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: "--- NỘI DUNG ĐƯỢC HỆ THỐNG PHỤC HỒI BÙ (AI TỪNG BỎ SÓT) ---",
-            bold: true,
-            color: "FF0000",
-          }),
-        ],
-        spacing: { before: 400, after: 200 },
-      })
-    );
-
-    article.recoveryContent.forEach((para) => {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: para,
-              italics: true,
-              color: "B22222",
-              shading: { fill: "FFFFE0" },
-            }),
-          ],
-          spacing: { after: 200 },
-        })
-      );
-    });
-  }
-
   // Image Caption
-  if (article.imageCaption && article.imageCaption !== 'null') {
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: `Chú thích ảnh: ${article.imageCaption}`,
-            italics: true,
-          }),
-        ],
-        spacing: { before: 200, after: 200 },
-      })
-    );
+  if (article.imageCaption && article.imageCaption.length > 0) {
+    article.imageCaption.forEach((caption) => {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `Chú thích ảnh: ${caption}`,
+              italics: true,
+            }),
+          ],
+          spacing: { before: 200, after: 200 },
+        })
+      );
+    });
   }
 
   const doc = new Document({

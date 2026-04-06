@@ -20,12 +20,10 @@ export interface Article {
   title: string;
   author: string;
   content: string[];
-  imageCaption: string;
+  imageCaption: string[];
   seePage: string;
   pageNumbers: number[];
   fileName?: string;
-  orphanedContent?: string[];
-  recoveryContent?: string[];
 }
 
 export class QuotaExhaustedError extends Error {
@@ -238,97 +236,8 @@ export function mergeArticles(articles: Article[]): Article[] {
     }
   }
 
-  // Xử lý đoạn cuối cùng và loại bỏ tên tác giả trùng lặp ở đầu nội dung
+  // Xử lý đoạn cuối cùng của mỗi bài báo
   merged.forEach(article => {
-    // 1. Loại bỏ tên tác giả ở đầu nội dung nếu đã có ở trường author
-    if (article.author && article.content.length > 0) {
-      const firstPara = article.content[0].trim();
-      const authorNormalized = normalize(article.author);
-      const firstParaNormalized = normalize(firstPara);
-      
-      // Các tiền tố phổ biến cần loại bỏ khi so sánh
-      const prefixes = [
-        /^bài và ảnh:?\s*/i,
-        /^bài:?\s*/i,
-        /^tác giả:?\s*/i,
-        /^thực hiện:?\s*/i,
-        /^ảnh:?\s*/i
-      ];
-      
-      let cleanFirstPara = firstPara;
-      let isMatch = false;
-      
-      // Thử so sánh trực tiếp hoặc sau khi loại bỏ tiền tố
-      if (firstParaNormalized === authorNormalized || firstParaNormalized.startsWith(authorNormalized)) {
-        isMatch = true;
-      } else {
-        let tempPara = firstPara;
-        prefixes.forEach(p => {
-          tempPara = tempPara.replace(p, "");
-        });
-        if (normalize(tempPara) === authorNormalized || normalize(tempPara).startsWith(authorNormalized)) {
-          isMatch = true;
-        }
-      }
-      
-      // Nếu khớp và đoạn văn đó ngắn (thường tên tác giả đứng riêng một dòng/đoạn)
-      // Hoặc nếu nó bắt đầu bằng tên tác giả và theo sau là dấu gạch ngang/chấm
-      if (isMatch) {
-        if (firstPara.length < article.author.length + 20) {
-          article.content.shift();
-        } else {
-          // Nếu tên tác giả dính liền vào đoạn văn, thử cắt bỏ
-          let tempPara = firstPara;
-          let matchedPrefix = "";
-          prefixes.forEach(p => {
-            const match = tempPara.match(p);
-            if (match) matchedPrefix = match[0];
-          });
-          
-          const authorInPara = firstPara.substring(matchedPrefix.length, matchedPrefix.length + article.author.length);
-          if (normalize(authorInPara) === authorNormalized) {
-            const remaining = firstPara.substring(matchedPrefix.length + article.author.length).trim();
-            // Loại bỏ các ký tự phân cách dư thừa
-            const finalRemaining = remaining.replace(/^[:.\-–—\s]+/, "").trim();
-            if (finalRemaining.length > 0) {
-              article.content[0] = finalRemaining;
-            } else {
-              article.content.shift();
-            }
-          }
-        }
-      }
-    }
-
-    // 2. Loại bỏ chú thích ảnh trùng lặp hoặc di chuyển từ nội dung sang trường imageCaption
-    const captionRegex = /^\(Ảnh[:\s].*?\)$|^Ảnh[:\s].*?$|^\(Ảnh\s.*?\)$/i;
-    const finalContent: string[] = [];
-    
-    article.content.forEach(para => {
-      const trimmedPara = para.trim();
-      const paraNormalized = normalize(trimmedPara);
-      const captionNormalized = article.imageCaption ? normalize(article.imageCaption) : "";
-      
-      // Nếu trùng với imageCaption đã có -> Loại bỏ
-      if (captionNormalized && (paraNormalized === captionNormalized || paraNormalized.includes(captionNormalized) || captionNormalized.includes(paraNormalized))) {
-        return; // Skip this paragraph
-      }
-      
-      // Nếu khớp mẫu chú thích ảnh (Ảnh...) hoặc (Ảnh:...)
-      if (captionRegex.test(trimmedPara)) {
-        // Nếu chưa có imageCaption hoặc caption này chưa có trong imageCaption -> Cập nhật/Bổ sung
-        if (!article.imageCaption) {
-          article.imageCaption = trimmedPara;
-        } else if (!article.imageCaption.includes(trimmedPara)) {
-          article.imageCaption += " " + trimmedPara;
-        }
-        return; // Skip this paragraph
-      }
-      
-      finalContent.push(para);
-    });
-    article.content = finalContent;
-
     if (article.content.length > 0) {
       const lastIndex = article.content.length - 1;
       let lastPara = article.content[lastIndex].trim();
@@ -571,75 +480,96 @@ export async function extractArticlesHybrid(
     }))
   }));
 
-  let retries = 0;
-  const maxRetries = 4; // Tăng số lần thử lại cho lỗi mạng
-  let lastError: any = null;
+  const response = await fetch('/api/extract-articles', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      optimizedZones,
+      pageNumber,
+      fileName,
+      base64Image
+    }),
+  });
 
-  while (retries <= maxRetries) {
-    try {
-      const response = await fetch('/api/extract-articles', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          optimizedZones,
-          pageNumber,
-          fileName,
-          base64Image
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        if (response.status === 429) {
-          throw new QuotaExhaustedError(errorData.error || 'Hết hạn mức API. Vui lòng thử lại sau.', []);
-        }
-        throw new Error(errorData.error || 'Failed to extract articles from server');
-      }
-
-      const { articles } = await response.json();
-
-      // Map to Article type and add missing fields
-      const finalArticles: Article[] = articles.map((art: any, i: number) => {
-        const article: Article = {
-          id: `${fileName}-${pageNumber}-${i}`,
-          articleRegionId: "",
-          title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
-          author: art.author && art.author !== 'null' ? art.author : "",
-          content: (Array.isArray(art.content) ? art.content : [])
-            .map((p: string) => p.trim())
-            .filter((p: string) => p.length > 0 && p !== 'null'),
-          imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
-          seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
-          pageNumbers: [pageNumber],
-          fileName: fileName
-        };
-        
-        if (onArticleParsed) {
-          onArticleParsed(article);
-        }
-        return article;
-      });
-
-      return finalArticles;
-    } catch (error: any) {
-      lastError = error;
-      if (error instanceof QuotaExhaustedError) throw error;
-      
-      const errorMsg = error?.message || String(error);
-      
-      // If it's a network error (Failed to fetch), retry
-      if ((errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError') || errorMsg.includes('fetch failed')) && retries < maxRetries) {
-        retries++;
-        const delay = Math.pow(2, retries) * 2000; // Increase delay
-        console.warn(`Network error (${errorMsg}). Retrying in ${delay}ms... (${retries}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-      throw error;
-    }
+  if (!response.ok) {
+    throw new Error('Failed to extract articles from server');
   }
 
-  throw lastError;
+  const { articles } = await response.json();
+
+  // Map to Article type and add missing fields
+  const finalArticles: Article[] = articles.map((art: any, i: number) => {
+    let author = art.author && art.author !== 'null' ? art.author : "";
+    let content = (Array.isArray(art.content) ? art.content : [])
+        .map((p: string) => p.trim())
+        .filter((p: string) => p.length > 0 && p !== 'null');
+    let imageCaptions: string[] = (Array.isArray(art.imageCaption) ? art.imageCaption : [])
+        .map((c: string) => c.trim())
+        .filter((c: string) => c.length > 0 && c !== 'null');
+
+    // 1. Author Processing
+    if (content.length > 0) {
+      const firstPara = content[0];
+      
+      // Case 1: Author in Author field AND at start of Content
+      if (author && firstPara.toLowerCase().startsWith(author.toLowerCase())) {
+        content[0] = firstPara.substring(author.length).trim().replace(/^[-,: ]+/, '');
+      } 
+      // Case 2: Author only in Content
+      else if (!author) {
+        const match = firstPara.match(/^(Bài và ảnh:)\s*(.*)/i);
+        if (match) {
+          author = match[2].trim();
+          content[0] = firstPara.substring(match[0].length).trim();
+        }
+      }
+    }
+
+    // 2. Photo Caption Processing
+    const captionRegex = /^(Ảnh:|Ảnh)\s*(.*)/i;
+    for (let i = 0; i < content.length; i++) {
+      const match = content[i].match(captionRegex);
+      if (match) {
+        const foundCaption = match[0].trim();
+        
+        // If we don't have a caption, or this is a new one, update it
+        if (imageCaptions.length === 0) {
+          imageCaptions.push(foundCaption);
+          content.splice(i, 1);
+          i--; // Adjust index
+        } 
+        // If we already have a caption, and it matches, remove from content
+        else if (imageCaptions.some(c => c.toLowerCase().includes(foundCaption.toLowerCase()))) {
+          content.splice(i, 1);
+          i--;
+        } else {
+          // New caption found
+          imageCaptions.push(foundCaption);
+          content.splice(i, 1);
+          i--;
+        }
+      }
+    }
+
+    const article: Article = {
+      id: `${fileName}-${pageNumber}-${i}`,
+      articleRegionId: "",
+      title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
+      author: author,
+      content: content.filter((p: string) => p.length > 0),
+      imageCaption: imageCaptions,
+      seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
+      pageNumbers: [pageNumber],
+      fileName: fileName
+    };
+    
+    if (onArticleParsed) {
+      onArticleParsed(article);
+    }
+    return article;
+  });
+
+  return finalArticles;
 }
