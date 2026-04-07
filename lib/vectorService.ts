@@ -44,8 +44,22 @@ export const extractVectorData = async (page: any): Promise<VectorData> => {
     const pageHeight = viewport.height;
 
     if (!pdfjsModule) {
-      const pdfjs = await import('pdfjs-dist/build/pdf.min.mjs');
-      pdfjsModule = pdfjs.default || pdfjs;
+      try {
+        // Try standard entry point first
+        const pdfjs = await import('pdfjs-dist' as any);
+        pdfjsModule = pdfjs.default || pdfjs;
+      } catch (e) {
+        console.warn("Standard pdfjs-dist import failed, trying build/pdf.min.mjs", e);
+        // Fallback to specific file if needed
+        const pdfjs = await import('pdfjs-dist/build/pdf.min.mjs' as any);
+        pdfjsModule = pdfjs.default || pdfjs;
+      }
+      
+      // Ensure worker is set up if we are in a browser environment
+      if (typeof window !== 'undefined' && pdfjsModule && pdfjsModule.GlobalWorkerOptions) {
+        const version = pdfjsModule.version || '5.6.205';
+        pdfjsModule.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+      }
     }
     const pdfjs = pdfjsModule;
     
