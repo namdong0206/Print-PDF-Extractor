@@ -28,12 +28,12 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { parseNewspaperLayout } from '@/lib/layoutService';
-import { parseNewspaperLayoutHybrid } from '@/lib/hlaService';
+import { analyzeLayoutWithGemini } from '@/lib/geminiLayoutService';
 import { ArticleRegion, BoundingBox } from '@/lib/types';
 import { segmentRegions, Region, groupBoxesByArticleRegion } from '@/lib/segmentationService';
 import { extractTextBlocksWithMetadata, extractArticlesHybrid, TextBlock, Article, mergeArticles, isSimilarTitle, QuotaExhaustedError } from '@/lib/geminiProcessor';
 import { processArticleContent } from '@/lib/textProcessor';
-import { HLAZone } from '@/lib/hlaService';
+import { HLAZone, parseNewspaperLayoutHybrid } from '@/lib/hlaService';
 import { exportArticleToWord, exportAllArticlesToZip } from '@/lib/wordExport';
 import * as Comlink from 'comlink';
 import { getCache, setCache } from '@/lib/cacheService';
@@ -193,10 +193,11 @@ function NewspaperLayoutContent() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [selectedBox, setSelectedBox] = useState<BoundingBox | null>(null);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
-  const [viewMode, setViewMode] = useState<'all' | 'boxes' | 'regions' | 'articles' | 'lines'>('all');
+  const [viewMode, setViewMode] = useState<'all' | 'boxes' | 'regions' | 'articles' | 'lines' | 'gemini-layout'>('all');
   const [filteredFile, setFilteredFile] = useState<File | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
   const [hlaZones, setHlaZones] = useState<HLAZone[]>([]);
+  const [geminiBoxes, setGeminiBoxes] = useState<BoundingBox[]>([]);
   
   const filteredArticles = useMemo(() => {
     if (!filteredFile) return articles;
@@ -362,7 +363,11 @@ function NewspaperLayoutContent() {
     setSelectedArticle(null);
     setSelectedBox(null);
     setFilteredFile(null);
-    setSelectedFiles(new Set());
+    
+    // Tự động chọn tất cả các file để trích xuất
+    const allIndices = new Set(newFiles.map((_, i) => i));
+    setSelectedFiles(allIndices);
+    
     setProcessingTime(null);
     setElapsedTime(0);
     setPageSize({ width: 600, height: 800 });
@@ -371,6 +376,11 @@ function NewspaperLayoutContent() {
     
     // Bắt đầu phiên làm việc mới với file đầu tiên
     await loadFile(newFiles[0], true);
+    
+    // Tự động kích hoạt quá trình trích xuất
+    setTimeout(() => {
+      handleExtractAll();
+    }, 1000);
   };
 
   const loadFile = async (fileToLoad: File, clearArticles: boolean = true): Promise<{ pdfDoc: any, image: string | null } | null> => {
@@ -507,11 +517,21 @@ function NewspaperLayoutContent() {
     }
   };
 
-  const handleSegmentRegions = () => {
-    if (boxes.length === 0) return;
-    const segmented = segmentRegions(boxes, pageSize.height);
-    setRegions(segmented);
-    setViewMode('regions');
+  const handleGeminiLayoutAnalysis = async () => {
+    if (!pageImage) return;
+    setIsProcessing(true);
+    try {
+      const result = await analyzeLayoutWithGemini(pageImage, currentPage, files[currentFileIndex].name);
+      setGeminiBoxes(result);
+      setViewMode('gemini-layout');
+      setToastMessage("Phân tích bố cục bằng Gemini hoàn tất");
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (error) {
+      console.error("Error analyzing layout with Gemini:", error);
+      alert("Lỗi khi phân tích bố cục bằng Gemini. Vui lòng thử lại.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const toggleFileSelection = (index: number) => {
@@ -716,17 +736,41 @@ function NewspaperLayoutContent() {
     try {
       const page = await pdfDoc.getPage(docPageNum);
       
-      // 1. Hybrid Layout Analysis (Heuristic)
-      console.time("HLATime");
-      const { zones } = await parseNewspaperLayoutHybrid(page);
-      console.timeEnd("HLATime");
-      
-      setHlaZones(zones);
-      
-      // 2. Semantic Extraction (Gemini 3 Flash - Multimodal)
-      // Use metadataPageNum if provided, otherwise docPageNum
+      // 1. Trích xuất tất cả các khối văn bản từ PDF
+      console.time("TextExtractionTime");
+      const textBlocks = await extractTextBlocksWithMetadata(page);
+      console.timeEnd("TextExtractionTime");
+
+      if (textBlocks.length === 0) {
+        console.warn("No text blocks found on page", docPageNum);
+        return [];
+      }
+
+      // 2. Gọi API trích xuất ngữ nghĩa (Gemini 3 Flash - Multimodal)
+      // Chúng ta gửi toàn bộ blocks và hình ảnh để Gemini tự phân vùng theo ngữ nghĩa
       const finalPageNum = metadataPageNum ?? docPageNum;
-      const extractedArticles = await extractArticlesHybrid(zones, finalPageNum, fileName, image, onArticleParsed);
+      
+      // Tạo "zones" giả lập chứa tất cả blocks để tương thích với extractArticlesHybrid hiện tại
+      // Hoặc cập nhật extractArticlesHybrid để nhận blocks trực tiếp.
+      // Ở đây tôi đã cập nhật extractArticlesHybrid để tự phẳng hóa zones, 
+      // nên tôi sẽ truyền một zone duy nhất chứa tất cả blocks.
+      const singleZone: HLAZone = {
+        id: 'page-zone',
+        bbox: { x: 0, y: 0, width: 1000, height: 1000 },
+        blocks: textBlocks.map(tb => ({
+          id: `tb-${tb.id}`,
+          text: tb.t,
+          bbox: { x: tb.x, y: tb.y, width: tb.w || 0, height: tb.fs },
+          fontSize: tb.fs,
+          fontName: '',
+          isBold: tb.b,
+          isIndented: tb.ind || false,
+          label: 'unknown'
+        })),
+        type: 'unknown'
+      };
+
+      const extractedArticles = await extractArticlesHybrid([singleZone], finalPageNum, fileName, image, onArticleParsed);
       
       return extractedArticles;
     } catch (error: any) {
@@ -747,10 +791,19 @@ function NewspaperLayoutContent() {
       case 'Caption': return 'stroke-purple-500 fill-purple-500/20 text-purple-800';
       case 'Author': return 'stroke-pink-500 fill-pink-500/20 text-pink-800';
       case 'Content': return 'stroke-teal-500 fill-teal-500/20 text-teal-800';
-      case 'Header':
-      case 'Footer': return 'stroke-gray-300 fill-gray-300/10 text-gray-400';
-      case 'Horizontal Line': return 'stroke-blue-600 fill-blue-600/40 text-blue-800';
-      case 'Vertical Line': return 'stroke-green-600 fill-green-600/40 text-green-800';
+      case 'TITLE': return 'stroke-blue-600 fill-blue-600/20 text-blue-900';
+      case 'AUTHOR': return 'stroke-pink-500 fill-pink-500/20 text-pink-800';
+      case 'SAPO': return 'stroke-green-600 fill-green-600/20 text-green-900';
+      case 'BODY_COLUMN': return 'stroke-orange-500 fill-orange-500/10 text-orange-800';
+      case 'PARAGRAPH': return 'stroke-teal-500 fill-teal-500/10 text-teal-800';
+      case 'IMAGE': return 'stroke-[#F27D26] fill-[#F27D26]/20 text-[#F27D26]';
+      case 'CAPTION': return 'stroke-purple-500 fill-purple-500/20 text-purple-800';
+      case 'HEADER':
+      case 'FOOTER': return 'stroke-gray-300 fill-gray-300/10 text-gray-400';
+      case 'ADVERTISEMENT': return 'stroke-red-500 fill-red-500/10 text-red-800';
+      case 'PAGE_NUMBER':
+      case 'SEE_PAGE':
+      case 'FROM_PAGE': return 'stroke-indigo-500 fill-indigo-500/10 text-indigo-800';
       default: return 'stroke-gray-400 fill-gray-400/20 text-gray-800';
     }
   };
@@ -849,14 +902,6 @@ function NewspaperLayoutContent() {
             <Layers size={16} />
             Trích xuất
           </button>
-          <button 
-            onClick={handleExtractAll}
-            disabled={files.length === 0 || isProcessing}
-            className="w-full py-3 rounded-xl flex items-center justify-center gap-2 transition-all text-sm font-bold shadow-sm bg-[#1A1A1A] text-white hover:bg-black disabled:opacity-50"
-          >
-            <Layers size={16} />
-            Trích xuất tất cả
-          </button>
           <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between">
               <h2 className="font-serif font-bold text-lg">Bài báo đã trích xuất</h2>
@@ -887,7 +932,6 @@ function NewspaperLayoutContent() {
                       )}
                     >
                       <h3 className="font-serif font-bold text-sm">{article.title}</h3>
-                      {article.note && <p className="text-red-500 text-xs mt-1">⚠️ Có cảnh báo</p>}
                     </div>
                   ))}
                 </div>
@@ -934,11 +978,6 @@ function NewspaperLayoutContent() {
                   <h1 className="text-3xl font-serif font-bold leading-tight text-gray-900">{selectedArticle.title}</h1>
                   <CopyButton text={selectedArticle.title} label="Tiêu đề" />
                 </div>
-                {selectedArticle.note && (
-                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-600 font-bold">
-                    {selectedArticle.note}
-                  </div>
-                )}
                 {selectedArticle.author && selectedArticle.author !== 'null' && (
                   <div className="flex items-center justify-between gap-4">
                     <p className="text-sm font-bold text-gray-700">Tác giả: {selectedArticle.author}</p>
@@ -946,13 +985,9 @@ function NewspaperLayoutContent() {
                   </div>
                 )}
                 {selectedArticle.imageCaption && selectedArticle.imageCaption.length > 0 && (
-                  <div className="flex flex-col gap-2">
-                    {selectedArticle.imageCaption.map((caption, i) => (
-                      <div key={i} className="flex items-start justify-between gap-4">
-                        <div className="text-sm text-gray-600 italic">Chú thích ảnh: {caption}</div>
-                        <CopyButton text={caption} label="Chú thích ảnh" />
-                      </div>
-                    ))}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="text-sm text-gray-600 italic">Chú thích ảnh: {selectedArticle.imageCaption.join(', ')}</div>
+                    <CopyButton text={selectedArticle.imageCaption.join(', ')} label="Chú thích ảnh" />
                   </div>
                 )}
                 <div className="space-y-4">
@@ -972,7 +1007,7 @@ function NewspaperLayoutContent() {
                       selectedArticle.title,
                       selectedArticle.author && selectedArticle.author !== 'null' ? `Tác giả: ${selectedArticle.author}` : '',
                       ...selectedArticle.content,
-                      selectedArticle.imageCaption && selectedArticle.imageCaption.length > 0 ? selectedArticle.imageCaption.map(c => `Chú thích ảnh: ${c}`).join('\n') : ''
+                      selectedArticle.imageCaption && selectedArticle.imageCaption.length > 0 ? `Chú thích ảnh: ${selectedArticle.imageCaption.join(', ')}` : ''
                     ].filter(Boolean).join('\n\n')} 
                     label="toàn bộ bài báo" 
                   />

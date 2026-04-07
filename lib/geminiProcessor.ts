@@ -236,7 +236,11 @@ export function mergeArticles(articles: Article[]): Article[] {
       
       // Check if it's an unmatched continuation
       const isArticleContinuation = /tiếp theo trang|tiếp từ trang|tiếp theo/i.test(article.seePage || "");
-      if (isArticleContinuation) {
+      
+      // Check if it's a header-only article (no content)
+      const isHeaderOnly = newArt.content.length === 0 || (newArt.content.length === 1 && newArt.content[0].trim() === "");
+      
+      if (isArticleContinuation && !isHeaderOnly) {
         newArt.note = "Bài không ghép được do không tìm thấy phần còn lại...";
       } else {
         newArt.note = newArt.note || "";
@@ -316,8 +320,8 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
       // Tính toán khoảng cách X giữa kết thúc của currentLine và bắt đầu của nextItem
       const gap = nextItem.x - (currentLine.x + (currentLine.w || 0));
       
-      // Ngưỡng chẻ dọc (Vertical Split) dựa trên khoảng trống giữa các cột (mặc định 40)
-      const minGap = 40; 
+      // Ngưỡng chẻ dọc (Vertical Split) dựa trên khoảng trống giữa các cột (mặc định 20)
+      const minGap = 20; 
       const isLargeGap = gap > minGap;
 
       if (sameLine && !isLargeGap) {
@@ -339,9 +343,9 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
       const nextLine = lineBlocks[i];
       
       // Cùng cột (x gần nhau)
-      const sameColumn = Math.abs(currentPara.x - nextLine.x) < 60;
+      const sameColumn = Math.abs(currentPara.x - nextLine.x) < 30;
       // Khoảng cách dòng (y gần nhau)
-      const closeVertical = Math.abs(nextLine.y - (currentPara.y + currentPara.fs)) < 45;
+      const closeVertical = Math.abs(nextLine.y - (currentPara.y + currentPara.fs)) < 30;
       // Cùng kiểu font hoặc đều là font nhỏ (body text)
       const bothSmall = currentPara.fs < 13 && nextLine.fs < 13;
       const sameStyle = (Math.abs(currentPara.fs - nextLine.fs) <= 3 && currentPara.b === nextLine.b) || bothSmall;
@@ -470,25 +474,19 @@ export async function extractArticlesHybrid(
 ): Promise<Article[]> {
   console.log("--- [DEBUG] extractArticlesHybrid called (calling server-side API) ---");
   
-  // Làm sạch dữ liệu gửi đi
-  const cleanedZones = zones
-    .filter(zone => zone.type === 'article' || zone.type === 'unknown')
-    .map(zone => {
-      return {
-        ...zone,
-        blocks: zone.blocks
-          .filter(b => b.text.trim().length > 0)
-      };
-    }).filter(zone => zone.blocks.length > 0);
-
-  const optimizedZones = cleanedZones.map(zone => ({
-    blocks: zone.blocks.map(b => ({
+  // Thu thập tất cả các blocks từ tất cả các zones và làm phẳng chúng
+  const allBlocks = zones.flatMap(zone => 
+    zone.blocks.map(b => ({
       t: b.text,
+      x: Math.round(b.bbox.x),
+      y: Math.round(b.bbox.y),
+      w: Math.round(b.bbox.width),
+      h: Math.round(b.bbox.height),
       fs: b.fontSize,
       b: b.isBold,
       l: b.label
     }))
-  }));
+  ).filter(b => b.t.trim().length > 0);
 
   const response = await fetch('/api/extract-articles', {
     method: 'POST',
@@ -496,7 +494,7 @@ export async function extractArticlesHybrid(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      optimizedZones,
+      blocks: allBlocks,
       pageNumber,
       fileName,
       base64Image

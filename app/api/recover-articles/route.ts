@@ -46,19 +46,27 @@ export async function POST(req: Request) {
     `;
 
     const contents = [{ parts: [{ text: prompt }] }];
-    const modelsToTry = ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"];
+    const modelsToTry = [
+      "gemini-3.1-flash-lite-preview",
+      "gemini-3-flash-preview",
+      "gemini-3.1-pro-preview"
+    ];
 
     let finalRecovery: any = null;
     let success = false;
     let lastError: any = null;
 
     for (const apiKey of apiKeys) {
+      const ai = new GoogleGenAI({ apiKey });
+      let keyInvalid = false;
+
       for (const model of modelsToTry) {
-        const ai = new GoogleGenAI({ apiKey });
         let retries = 0;
         const maxRetries = 2;
+
         while (retries <= maxRetries) {
           try {
+            console.log(`Trying article recovery with model: ${model} (Attempt ${retries + 1})`);
             const response = await ai.models.generateContent({
               model: model,
               contents: contents,
@@ -89,61 +97,40 @@ export async function POST(req: Request) {
 
             finalRecovery = JSON.parse(response.text || "[]");
             success = true;
-            break;
+            break; // Success!
           } catch (error: any) {
-            lastError = error;
             const errorStr = error.toString();
+            const isInvalidKey = errorStr.includes('400') || errorStr.includes('API_KEY_INVALID') || errorStr.includes('key not valid');
             const isQuotaError = errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED');
-            const isUnavailableError = errorStr.includes('503') || errorStr.includes('UNAVAILABLE');
-            const isInternalError = errorStr.includes('500') || errorStr.includes('INTERNAL');
-
+            const isUnavailable = errorStr.includes('503') || errorStr.includes('UNAVAILABLE') || errorStr.includes('high demand');
+            
+            if (isInvalidKey) {
+              console.error(`API Key invalid in recovery: ${apiKey.substring(0, 8)}...`);
+              keyInvalid = true;
+              lastError = error;
+              break; // Skip all models for this key
+            }
+            
             if (isQuotaError) {
-              // On quota error, don't retry the same model/key.
-              // Move to the next model or next key immediately.
-              console.log(`Quota exceeded for ${model} in recovery. Moving to next model/key...`);
-              break; // Break the while loop to try next model/key
+              console.warn(`Quota exceeded for ${model} in recovery with key ${apiKey.substring(0, 8)}...`);
+              lastError = error;
+              break; // Try next model
             }
-
-            if ((isUnavailableError || isInternalError) && retries < maxRetries) {
+            
+            if (isUnavailable && retries < maxRetries) {
               retries++;
-              let waitTime = 5000; // Fixed wait for 503/500
-              
-              try {
-                const match = errorStr.match(/\{[\s\S]*\}/);
-                if (match) {
-                  const parsed = JSON.parse(match[0]);
-                  let actualError = parsed.error;
-                  if (parsed.error?.message) {
-                    try {
-                      const inner = JSON.parse(parsed.error.message);
-                      if (inner.error) actualError = inner.error;
-                    } catch (e) {
-                      // Not a JSON message
-                    }
-                  }
-                  const delayStr = actualError?.details?.find((d: any) => d.retryDelay)?.retryDelay;
-                  
-                  if (delayStr) {
-                    if (delayStr.endsWith('ms')) {
-                      const ms = parseFloat(delayStr.replace('ms', ''));
-                      if (!isNaN(ms)) waitTime = Math.max(waitTime, ms + 100);
-                    } else if (delayStr.endsWith('s')) {
-                      const seconds = parseFloat(delayStr.replace('s', ''));
-                      if (!isNaN(seconds)) waitTime = Math.max(waitTime, (seconds + 1) * 1000);
-                    }
-                  }
-                }
-              } catch (e) {}
-
-              const errorType = isUnavailableError ? 'Model unavailable' : 'Internal error';
-              console.log(`${errorType} for ${model} in recovery. Retrying in ${waitTime}ms... (Attempt ${retries}/${maxRetries})`);
-              await sleep(waitTime);
-              continue;
+              const waitTime = 2000 * retries;
+              console.warn(`Model ${model} unavailable/high demand in recovery. Retrying in ${waitTime}ms... (${retries}/${maxRetries})`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+              continue; // Retry same model
             }
-            break;
+
+            console.error(`Lỗi với model ${model} trong recovery:`, error);
+            lastError = error;
+            break; // Try next model
           }
         }
-        if (success) break;
+        if (success || keyInvalid) break;
       }
       if (success) break;
     }

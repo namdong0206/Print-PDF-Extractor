@@ -37,23 +37,31 @@ export async function POST(req: Request) {
     const jsonPayload = JSON.stringify(optimizedZones);
     
     const prompt = `
-    Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất nội dung bài báo từ JSON zones đã được làm sạch và nhóm theo cột.
-
-    QUY TẮC BẮT BUỘC:
-    1. Chỉ trả về JSON thuần túy theo schema. KHÔNG chào hỏi, KHÔNG giải thích, KHÔNG thêm văn bản thừa.
-    2. Dữ liệu đầu vào đã được làm sạch header/footer và nhóm theo cột.
-    3. Nhiệm vụ của bạn là:
-       - Xác định Tiêu đề (Title). Nếu không có tiêu đề, hãy đặt là "Bài không có tiêu đề...".
-       - Xác định Tác giả (Author).
-       - Xác định Sapo (nếu có, gộp vào Content).
-       - Xác định Chú thích ảnh (Image Captions).
-       - Xác định các đoạn văn bản chính (Content paragraphs).
-       - Xác định chỉ dẫn chuyển trang (See page).
-    4. TRÍCH XUẤT TẤT CẢ các vùng có nội dung văn bản. Nếu một vùng là phần tiếp theo của bài báo khác, hãy cố gắng ghép nối thông qua ngữ cảnh hoặc chỉ dẫn chuyển trang. Nếu không thể ghép nối, hãy trích xuất nó thành một bài báo riêng.
-    5. Giữ nguyên cấu trúc đoạn văn bản.
-    6. Trích xuất ĐẦY ĐỦ 100% nội dung văn bản.
-
-    DỮ LIỆU ZONES (JSON):
+    Hãy phân tích bố cục trang báo này một cách cực kỳ chính xác.
+    Nhiệm vụ quan trọng nhất: Xác định tọa độ [ymin, xmin, ymax, xmax] (chuẩn hóa 0-1000) cho từng thành phần.
+    
+    YÊU CẦU ĐẶC BIỆT VỀ ĐỘ CHÍNH XÁC:
+    1. Các khung (bounding boxes) của các cột báo (BODY_COLUMN) và đoạn văn (PARAGRAPH) phải sát khít với nội dung text, TUYỆT ĐỐI KHÔNG được đè lên nhau hoặc lấn sang cột bên cạnh.
+    2. Phân đoạn (PARAGRAPH) cụ thể trong từng cột.
+    3. Xác định thứ tự đọc (reading_order) logic từ trên xuống dưới, từ trái sang phải.
+    4. Nếu là đoạn văn trong cột, hãy ghi rõ parent_column_index.
+    5. Đảm bảo khoảng cách giữa các khung của hai cột cạnh nhau (khe cột) phải rõ ràng để tránh nhầm lẫn text.
+    
+    YÊU CẦU VỀ NGỮ NGHĨA VÀ PHÂN LOẠI:
+    - Gemini phải đọc kỹ nội dung để sắp xếp và phân loại các bài báo theo ngữ nghĩa một cách chuẩn xác nhất.
+    - KHI SẮP XẾP VÀ PHÂN LOẠI, HÃY GHI ĐÈ (OVERWRITE) TOÀN BỘ CÁC PHÂN LOẠI TRƯỚC ĐÓ TỪ YOLO (DỮ LIỆU ZONES). Tin tưởng vào khả năng phân tích ngữ nghĩa của bạn hơn là các nhãn có sẵn.
+    
+    Sau đó sử dụng các tọa độ để sắp xếp văn bản theo các trường để trả về dữ liệu JSON hoàn chỉnh cho hệ thống.
+    
+    QUY TẮC TRÍCH XUẤT:
+    - Gộp Sapo/Tít phụ vào Content.
+    - Loại bỏ Header/Footer/Quảng cáo/Số trang.
+    - Giữ nguyên tiêu đề gốc.
+    - Trích xuất ĐẦY ĐỦ 100% văn bản, không tóm tắt.
+    - Tìm chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)") đưa vào trường 'sp'.
+    - Tìm Dropcap và ghép vào từ đầu tiên.
+    
+    DỮ LIỆU TEXT (JSON ZONES):
     ${jsonPayload}
     `;
 
@@ -105,12 +113,23 @@ export async function POST(req: Request) {
                       description: "Content paragraphs"
                     },
                     sp: { type: Type.STRING, description: "See page" },
-                    ic: { 
+                    ic: { type: Type.STRING, description: "Image caption" },
+                    layout: {
                       type: Type.ARRAY,
-                      items: { type: Type.STRING },
-                      description: "Image captions" 
-                    },
-                    n: { type: Type.STRING, description: "Note" }
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          type: { type: Type.STRING, enum: ["BODY_COLUMN", "PARAGRAPH", "HEADLINE", "SAPO", "AUTHOR", "CAPTION"] },
+                          box_2d: { 
+                            type: Type.ARRAY, 
+                            items: { type: Type.NUMBER },
+                            description: "[ymin, xmin, ymax, xmax] normalized 0-1000"
+                          },
+                          reading_order: { type: Type.NUMBER },
+                          parent_column_index: { type: Type.NUMBER }
+                        }
+                      }
+                    }
                   },
                   required: ["t", "c"]
                 }
@@ -133,8 +152,7 @@ export async function POST(req: Request) {
             author: art.a,
             content: art.c,
             seePage: art.sp,
-            imageCaption: art.ic,
-            note: art.n || ""
+            imageCaption: art.ic
           }));
           
           success = true;
