@@ -517,7 +517,7 @@ function NewspaperLayoutContent() {
 
   const handleSegmentRegions = () => {
     if (boxes.length === 0) return;
-    const segmented = segmentRegions(boxes);
+    const segmented = segmentRegions(boxes, pageSize.height);
     setRegions(segmented);
     setViewMode('regions');
   };
@@ -947,10 +947,10 @@ function NewspaperLayoutContent() {
                     <CopyButton text={selectedArticle.author} label="Tác giả" />
                   </div>
                 )}
-                {selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' && (
+                {selectedArticle.imageCaption && selectedArticle.imageCaption.length > 0 && (
                   <div className="flex items-start justify-between gap-4">
-                    <div className="text-sm text-gray-600 italic">Chú thích ảnh: {selectedArticle.imageCaption}</div>
-                    <CopyButton text={selectedArticle.imageCaption} label="Chú thích ảnh" />
+                    <div className="text-sm text-gray-600 italic">Chú thích ảnh: {selectedArticle.imageCaption.join(' ')}</div>
+                    <CopyButton text={selectedArticle.imageCaption.join('\n')} label="Chú thích ảnh" />
                   </div>
                 )}
                 <div className="space-y-4">
@@ -970,7 +970,7 @@ function NewspaperLayoutContent() {
                       selectedArticle.title,
                       selectedArticle.author && selectedArticle.author !== 'null' ? `Tác giả: ${selectedArticle.author}` : '',
                       ...selectedArticle.content,
-                      selectedArticle.imageCaption && selectedArticle.imageCaption !== 'null' ? `Chú thích ảnh: ${selectedArticle.imageCaption}` : ''
+                      selectedArticle.imageCaption && selectedArticle.imageCaption.length > 0 ? `Chú thích ảnh: ${selectedArticle.imageCaption.join(' ')}` : ''
                     ].filter(Boolean).join('\n\n')} 
                     label="toàn bộ bài báo" 
                   />
