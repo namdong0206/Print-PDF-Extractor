@@ -858,7 +858,7 @@ export const parseNewspaperLayout = async (page: any, pageImage?: string): Promi
     detectedBoxes = mergeBoxes([...detectedBoxes, ...cvResult.boxes], 5, pageWidth);
 
     // 9. Segment Regions
-    const regions = segmentRegions(detectedBoxes, pageHeight);
+    const regions = segmentRegions(detectedBoxes);
     const cells: ArticleRegion[] = regions.map(r => ({
       id: r.id,
       polygon: [

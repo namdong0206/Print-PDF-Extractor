@@ -133,11 +133,9 @@ function ArticleContent() {
             ))}
           </div>
 
-          {article.imageCaption && article.imageCaption.length > 0 && (
+          {article.imageCaption && (
             <div className="bg-gray-50 p-4 rounded-xl text-sm text-gray-600 italic border-l-2 border-gray-200">
-              {article.imageCaption.map((caption, i) => (
-                <p key={i}>Chú thích ảnh: {caption}</p>
-              ))}
+              Chú thích ảnh: {article.imageCaption}
             </div>
           )}
         </article>

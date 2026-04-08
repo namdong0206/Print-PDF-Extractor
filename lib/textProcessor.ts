@@ -1,18 +1,9 @@
 import { TextBlock } from './geminiProcessor';
 
-export function cleanText(text: string): string {
-  return text
-    .replace(/\(Tiếp theo trang \d+\)/gi, '')
-    .replace(/\(Xem trang \d+\)/gi, '')
-    .replace(/\[.*?\]/g, '') // Remove [..]
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 export function processArticleContent(blocks: TextBlock[]): string[] {
   // 1. Remove image captions and empty blocks
   const filteredBlocks = blocks.filter(block => {
-    const trimmed = cleanText(block.t);
+    const trimmed = block.t.trim();
     if (!trimmed) return false;
     // Keywords for captions
     return !/^(Ảnh|Hình|Chú thích|Credit):/i.test(trimmed);
@@ -28,7 +19,7 @@ export function processArticleContent(blocks: TextBlock[]): string[] {
 
   for (let i = 0; i < filteredBlocks.length; i++) {
     const block = filteredBlocks[i];
-    const text = cleanText(block.t);
+    const text = block.t.trim().replace(/\((Tiếp theo trang|XEM TRANG).*?\)/gi, '');
 
     // Detect column switch or significant layout change
     if (i > 0) {
