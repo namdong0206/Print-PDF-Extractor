@@ -74,66 +74,71 @@ export const groupBoxesByArticleRegion = (boxes: BoundingBox[], regions: Article
   return grouped;
 };
 
-export const segmentRegions = (boxes: BoundingBox[]): Region[] => {
+export const segmentRegions = (boxes: BoundingBox[], pageHeight: number): Region[] => {
   if (boxes.length === 0) return [];
 
   // Separate content boxes and line boxes
-  const contentBoxes = boxes.filter(b => !['Horizontal Line', 'Vertical Line'].includes(b.label));
+  // Remove header/footer (top/bottom 5% of page)
+  const headerFooterThreshold = pageHeight * 0.05;
+  const contentBoxes = boxes.filter(b => 
+    !['Horizontal Line', 'Vertical Line'].includes(b.label) &&
+    b.y > headerFooterThreshold &&
+    b.y + b.height < pageHeight - headerFooterThreshold
+  );
   const lineBoxes = boxes.filter(b => ['Horizontal Line', 'Vertical Line'].includes(b.label));
 
-  // 1. Build a graph where boxes are nodes and edges exist if boxes overlap or are close,
-  //    AND no structural barrier (line) exists between them.
+  // 1. Split boxes that cross lines
+  let splitBoxes: BoundingBox[] = [];
+  for (const box of contentBoxes) {
+    let currentBoxes = [box];
+    for (const line of lineBoxes) {
+      let nextBoxes: BoundingBox[] = [];
+      for (const b of currentBoxes) {
+        // Check if line is within the box
+        if (line.label === 'Vertical Line' && b.x < line.x && b.x + b.width > line.x) {
+            // Split horizontally
+            nextBoxes.push({ ...b, id: `${b.id}-left`, width: line.x - b.x });
+            nextBoxes.push({ ...b, id: `${b.id}-right`, x: line.x, width: b.x + b.width - line.x });
+        } else if (line.label === 'Horizontal Line' && b.y < line.y && b.y + b.height > line.y) {
+            // Split vertically
+            nextBoxes.push({ ...b, id: `${b.id}-top`, height: line.y - b.y });
+            nextBoxes.push({ ...b, id: `${b.id}-bottom`, y: line.y, height: b.y + b.height - line.y });
+        } else {
+            nextBoxes.push(b);
+        }
+      }
+      currentBoxes = nextBoxes;
+    }
+    splitBoxes.push(...currentBoxes);
+  }
+  const finalContentBoxes = splitBoxes;
+
+  // 2. Build a graph where boxes are nodes and edges exist if boxes overlap or are close
   const adj = new Map<string, string[]>();
-  for (let i = 0; i < contentBoxes.length; i++) {
-    for (let j = i + 1; j < contentBoxes.length; j++) {
-      const boxA = contentBoxes[i];
-      const boxB = contentBoxes[j];
+  for (let i = 0; i < finalContentBoxes.length; i++) {
+    for (let j = i + 1; j < finalContentBoxes.length; j++) {
+      const boxA = finalContentBoxes[i];
+      const boxB = finalContentBoxes[j];
       
       // Check if close or overlapping
-      const xThreshold = 20; // Reduced from 40 to be more precise
-      const yThreshold = 10; // Reduced from 20 to be more precise
+      const xThreshold = 5; 
+      const yThreshold = 2.5;  
       
       const overlapX = Math.max(boxA.x, boxB.x) < Math.min(boxA.x + boxA.width, boxB.x + boxB.width) + xThreshold;
       const overlapY = Math.max(boxA.y, boxB.y) < Math.min(boxA.y + boxA.height, boxB.y + boxB.height) + yThreshold;
       
       if (overlapX && overlapY) {
-        // Check for barriers
-        const isBlocked = lineBoxes.some(line => {
-          if (line.label === 'Vertical Line') {
-            // Check if line is strictly between boxA and boxB horizontally
-            const isBetweenX = (boxA.x + boxA.width <= line.x && line.x <= boxB.x) || 
-                               (boxB.x + boxB.width <= line.x && line.x <= boxA.x);
-            // Check if line spans the vertical overlap of the two boxes
-            const overlapYRange = [Math.max(boxA.y, boxB.y), Math.min(boxA.y + boxA.height, boxB.y + boxB.height)];
-            const lineSpansY = line.y < overlapYRange[1] + 20 && line.y + line.height > overlapYRange[0] - 20;
-            
-            return isBetweenX && lineSpansY;
-          } else if (line.label === 'Horizontal Line') {
-            // Check if line is strictly between boxA and boxB vertically
-            const isBetweenY = (boxA.y + boxA.height <= line.y && line.y <= boxB.y) || 
-                               (boxB.y + boxB.height <= line.y && line.y <= boxA.y);
-            // Check if line spans the horizontal overlap of the two boxes
-            const overlapXRange = [Math.max(boxA.x, boxB.x), Math.min(boxA.x + boxA.width, boxB.x + boxB.width)];
-            const lineSpansX = line.x < overlapXRange[1] + 20 && line.x + line.width > overlapXRange[0] - 20;
-            
-            return isBetweenY && lineSpansX;
-          }
-          return false;
-        });
-
-        if (!isBlocked) {
           adj.set(boxA.id, [...(adj.get(boxA.id) || []), boxB.id]);
           adj.set(boxB.id, [...(adj.get(boxB.id) || []), boxA.id]);
-        }
       }
     }
   }
 
-  // 2. BFS to find connected components (regions)
+  // 3. BFS to find connected components (regions)
   const regions: Region[] = [];
   const visited = new Set<string>();
   
-  for (const box of contentBoxes) {
+  for (const box of finalContentBoxes) {
     if (visited.has(box.id)) continue;
     
     const component: string[] = [];
@@ -153,8 +158,8 @@ export const segmentRegions = (boxes: BoundingBox[]): Region[] => {
       }
     }
     
-    // 3. Calculate bounds for the region
-    const componentBoxes = contentBoxes.filter(b => component.includes(b.id));
+    // 4. Calculate bounds for the region
+    const componentBoxes = finalContentBoxes.filter(b => component.includes(b.id));
     const minX = Math.min(...componentBoxes.map(b => b.x));
     const maxX = Math.max(...componentBoxes.map(b => b.x + b.width));
     const minY = Math.min(...componentBoxes.map(b => b.y));
@@ -208,7 +213,7 @@ export const groupTextBlocksIntoArticles = (textBlocks: TextBlock[], regions: Ar
       title: sortedBoxes[0]?.text || "Không có tiêu đề",
       author: "",
       content: sortedBoxes.map(b => b.text || ""),
-      imageCaption: "",
+      imageCaption: [],
       seePage: "",
       pageNumbers: [pageNumber]
     };

@@ -1,3 +1,5 @@
+import '@/lib/polyfills';
+
 export interface VectorLine {
   x1: number;
   y1: number;
@@ -31,6 +33,7 @@ export interface VectorData {
   images: VectorImage[];
 }
 
+// Polyfills are imported at the top level
 let pdfjsModule: any = null;
 
 export const extractVectorData = async (page: any): Promise<VectorData> => {
@@ -44,8 +47,24 @@ export const extractVectorData = async (page: any): Promise<VectorData> => {
     const pageHeight = viewport.height;
 
     if (!pdfjsModule) {
-      const pdfjs = await import('pdfjs-dist/build/pdf.min.mjs');
-      pdfjsModule = pdfjs.default || pdfjs;
+      try {
+        // Try modern minified build first - often the most stable in bundlers
+        const pdfjs = await import('pdfjs-dist/build/pdf.min.mjs');
+        pdfjsModule = pdfjs.default || pdfjs;
+        
+        if (!pdfjsModule || typeof pdfjsModule !== 'object' || !pdfjsModule.OPS) {
+          throw new Error("Invalid pdfjs object from modern minified build");
+        }
+      } catch (e) {
+        console.warn("Failed to load modern minified pdfjs-dist, trying main entry", e);
+        try {
+          const pdfjs = await import('pdfjs-dist');
+          pdfjsModule = pdfjs.default || pdfjs;
+        } catch (e2) {
+          console.error("Failed to load pdfjs-dist from all paths", e2);
+          throw new Error('Failed to load pdfjs-dist: ' + (e2 instanceof Error ? e2.message : String(e2)));
+        }
+      }
     }
     const pdfjs = pdfjsModule;
     

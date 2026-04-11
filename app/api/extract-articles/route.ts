@@ -12,21 +12,35 @@ function getApiKeys(): string[] {
   
   let apiKeys: string[] = [];
   
+  const filterKey = (k: string) => {
+    const trimmed = k.trim();
+    return trimmed.length > 0 && !trimmed.includes("TODO_KEYHERE");
+  };
+
   if (customApiKeysStr) {
-    const customKeys = customApiKeysStr.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    const customKeys = customApiKeysStr.split(',').filter(filterKey);
     apiKeys = [...apiKeys, ...customKeys];
   }
   
   if (defaultApiKeyStr) {
-    const defaultKeys = defaultApiKeyStr.split(',').map(k => k.trim()).filter(k => k.length > 0);
+    const defaultKeys = defaultApiKeyStr.split(',').filter(filterKey);
     const uniqueDefaultKeys = defaultKeys.filter(k => !apiKeys.includes(k));
     apiKeys = [...apiKeys, ...uniqueDefaultKeys];
   }
 
   if (apiKeys.length === 0) {
+    // If no valid keys, at least try the default one if it exists even if it looks like a placeholder
+    const fallbackKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    if (fallbackKey && fallbackKey.trim().length > 0) {
+      return [fallbackKey.trim()];
+    }
     throw new Error("No valid API keys found.");
   }
   return apiKeys;
+}
+
+async function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 export async function POST(req: Request) {
@@ -37,18 +51,32 @@ export async function POST(req: Request) {
     const jsonPayload = JSON.stringify(optimizedZones);
     
     const prompt = `
-    Bạn là chuyên gia biên tập báo chí. Nhiệm vụ: Trích xuất nội dung bài báo từ JSON zones.
+    Hãy phân tích bố cục trang báo này một cách cực kỳ chính xác.
+    Nhiệm vụ quan trọng nhất: Xác định tọa độ [ymin, xmin, ymax, xmax] (chuẩn hóa 0-1000) cho từng thành phần.
     
-    QUY TẮC BẮT BUỘC:
-    1. Chỉ trả về JSON thuần túy theo schema. KHÔNG chào hỏi, KHÔNG giải thích, KHÔNG thêm văn bản thừa.
-    2. Gộp Sapo/Tít phụ vào Content.
-    3. Loại bỏ Header/Footer.
-    4. Giữ nguyên tiêu đề.
-    5. Trích xuất ĐẦY ĐỦ 100% văn bản.
-    6. Tìm chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)") đưa vào trường 'sp'.
-    7. Tìm Dropcap và ghép vào từ đầu tiên.
+    YÊU CẦU ĐẶC BIỆT VỀ ĐỘ CHÍNH XÁC:
+    1. Các khung (bounding boxes) của các cột báo (BODY_COLUMN) và đoạn văn (PARAGRAPH) phải sát khít với nội dung text, TUYỆT ĐỐI KHÔNG được đè lên nhau hoặc lấn sang cột bên cạnh.
+    2. Phân đoạn (PARAGRAPH) cụ thể trong từng cột.
+    3. Xác định thứ tự đọc (reading_order) logic từ trên xuống dưới, từ trái sang phải.
+    4. Nếu là đoạn văn trong cột, hãy ghi rõ parent_column_index.
+    5. Đảm bảo khoảng cách giữa các khung của hai cột cạnh nhau (khe cột) phải rõ ràng để tránh nhầm lẫn text.
     
-    DỮ LIỆU ZONES (JSON):
+    YÊU CẦU VỀ NGỮ NGHĨA VÀ PHÂN LOẠI:
+    - Gemini phải đọc kỹ nội dung để sắp xếp và phân loại các bài báo theo ngữ nghĩa một cách chuẩn xác nhất.
+    - KHI SẮP XẾP VÀ PHÂN LOẠI, HÃY GHI ĐÈ (OVERWRITE) TOÀN BỘ CÁC PHÂN LOẠI TRƯỚC ĐÓ TỪ YOLO (DỮ LIỆU ZONES). Tin tưởng vào khả năng phân tích ngữ nghĩa của bạn hơn là các nhãn có sẵn.
+    
+    Sau đó sử dụng các tọa độ để sắp xếp văn bản theo các trường để trả về dữ liệu JSON hoàn chỉnh cho hệ thống.
+    
+    QUY TẮC TRÍCH XUẤT:
+    - Gộp Sapo/Tít phụ vào Content.
+    - Loại bỏ Header/Footer/Quảng cáo/Số trang.
+    - Giữ nguyên tiêu đề gốc.
+    - Trích xuất ĐẦY ĐỦ 100% văn bản, không tóm tắt.
+    - Tìm chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)") đưa vào trường 'sp'.
+    - Tìm Dropcap và ghép vào từ đầu tiên.
+    - NẾU CÓ CÁC KHỐI VĂN BẢN (độ dài >= 100 ký tự) KHÔNG THUỘC VỀ BÀI BÁO NÀO, hãy trích xuất chúng thành một bài báo riêng với tiêu đề: "Bài trang ${pageNumber} không tìm thấy nguồn ghép".
+    
+    DỮ LIỆU TEXT (JSON ZONES):
     ${jsonPayload}
     `;
 
@@ -68,81 +96,112 @@ export async function POST(req: Request) {
     const modelsToTry = [
       "gemini-3-flash-preview",
       "gemini-3.1-flash-lite-preview",
+      "gemini-flash-latest",
       "gemini-3.1-pro-preview"
     ];
 
     let finalArticles: any[] = [];
     let success = false;
+    let lastError = null;
 
     for (const apiKey of apiKeys) {
       for (const model of modelsToTry) {
         const ai = new GoogleGenAI({ apiKey });
-        try {
-          const responseStream = await ai.models.generateContentStream({
-            model: model,
-            contents: contents,
-            config: {
-              temperature: 0,
-              responseMimeType: "application/json",
-              thinkingConfig: { 
-                thinkingLevel: ThinkingLevel.MINIMAL 
-              },
-              responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    t: { type: Type.STRING, description: "Title" },
-                    a: { type: Type.STRING, description: "Author" },
-                    c: { 
-                      type: Type.ARRAY,
-                      items: { type: Type.STRING },
-                      description: "Content paragraphs"
-                    },
-                    sp: { type: Type.STRING, description: "See page" },
-                    ic: { type: Type.STRING, description: "Image caption" }
-                  },
-                  required: ["t", "c"]
-                }
-              },
-            },
-          });
+        let retryCount = 0;
+        const maxRetries = 2;
 
-          let fullText = "";
-          for await (const chunk of responseStream) {
-            if (chunk.text) {
-              fullText += chunk.text;
+        while (retryCount <= maxRetries) {
+          try {
+            const response = await ai.models.generateContent({
+              model: model,
+              contents: contents,
+              config: {
+                temperature: 0,
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      t: { type: Type.STRING, description: "Title" },
+                      a: { type: Type.STRING, description: "Author" },
+                      c: { 
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING },
+                        description: "Content paragraphs"
+                      },
+                      sp: { type: Type.STRING, description: "See page" },
+                      ic: { type: Type.STRING, description: "Image caption" },
+                      layout: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            type: { type: Type.STRING, enum: ["BODY_COLUMN", "PARAGRAPH", "HEADLINE", "SAPO", "AUTHOR", "CAPTION"] },
+                            box_2d: { 
+                              type: Type.ARRAY, 
+                              items: { type: Type.NUMBER },
+                              description: "[ymin, xmin, ymax, xmax] normalized 0-1000"
+                            },
+                            reading_order: { type: Type.NUMBER },
+                            parent_column_index: { type: Type.NUMBER }
+                          }
+                        }
+                      }
+                    },
+                    required: ["t", "c"]
+                  }
+                },
+              }
+            });
+
+            const fullText = response.text;
+            if (!fullText) throw new Error("Empty response from Gemini");
+            
+            const parsed = JSON.parse(fullText);
+            finalArticles = parsed.map((art: any) => ({
+              title: art.t,
+              author: art.a,
+              content: art.c,
+              seePage: art.sp,
+              imageCaption: art.ic
+            }));
+            
+            success = true;
+            break;
+          } catch (error: any) {
+            lastError = error;
+            // Check for rate limit or service unavailable
+            const errorStr = JSON.stringify(error).toLowerCase();
+            const isRetryable = errorStr.includes("429") || errorStr.includes("503") || errorStr.includes("quota") || errorStr.includes("unavailable");
+            
+            if (isRetryable) {
+              retryCount++;
+              if (retryCount <= maxRetries) {
+                const waitTime = Math.pow(2, retryCount) * 1000;
+                console.warn(`Model ${model} bị lỗi retryable, đang thử lại lần ${retryCount} sau ${waitTime}ms...`);
+                await sleep(waitTime);
+                continue;
+              }
             }
+            
+            console.error(`Lỗi với model ${model}:`, error);
+            break; // Thử model tiếp theo
           }
-          
-          // Need to implement extractCompleteObjects here or import it
-          // For now, assume fullText is valid JSON array as per schema
-          const parsed = JSON.parse(fullText);
-          finalArticles = parsed.map((art: any) => ({
-            title: art.t,
-            author: art.a,
-            content: art.c,
-            seePage: art.sp,
-            imageCaption: art.ic
-          }));
-          
-          success = true;
-          break;
-        } catch (error: any) {
-          console.error(`Lỗi với model ${model}:`, error);
-          continue;
         }
+        if (success) break;
       }
       if (success) break;
     }
 
     if (!success) {
-      return NextResponse.json({ error: 'Failed to extract articles' }, { status: 500 });
+      const errorMsg = lastError ? (lastError.message || JSON.stringify(lastError)) : 'Unknown error';
+      return NextResponse.json({ error: 'Failed to extract articles', details: errorMsg }, { status: 500 });
     }
 
     return NextResponse.json({ articles: finalArticles });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in API route:", error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: 'Internal Server Error', details: error.message }, { status: 500 });
   }
 }

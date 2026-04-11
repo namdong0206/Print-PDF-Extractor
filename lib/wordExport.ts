@@ -71,18 +71,20 @@ export const generateWordDocument = async (article: Article): Promise<Blob> => {
   });
 
   // Image Caption
-  if (article.imageCaption && article.imageCaption !== 'null') {
-    children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: `Chú thích ảnh: ${article.imageCaption}`,
-            italics: true,
-          }),
-        ],
-        spacing: { before: 200, after: 200 },
-      })
-    );
+  if (article.imageCaption && article.imageCaption.length > 0) {
+    article.imageCaption.forEach((caption) => {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `Chú thích ảnh: ${caption}`,
+              italics: true,
+            }),
+          ],
+          spacing: { before: 200, after: 200 },
+        })
+      );
+    });
   }
 
   const doc = new Document({

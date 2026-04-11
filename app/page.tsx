@@ -284,22 +284,38 @@ function NewspaperLayoutContent() {
     // Load pdfjs only on client
     const loadPdfJs = async () => {
       try {
+        // Try to load from the modern minified build
         const pdfjs = await import('pdfjs-dist/build/pdf.min.mjs');
         
-        // Handle potential default export or namespace object
         const pdfjsLib = pdfjs.default || pdfjs;
         
-        if (pdfjsLib) {
+        if (pdfjsLib && typeof pdfjsLib === 'object' && pdfjsLib.getDocument) {
           pdfjsRef.current = pdfjsLib;
           
           if (pdfjsLib.GlobalWorkerOptions) {
-            // Use the version from the package
             const version = pdfjsLib.version || '5.6.205';
             pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
           }
+        } else {
+          throw new Error("Invalid pdfjs object from modern minified build");
         }
       } catch (error) {
-        console.error("Error loading pdfjs:", error);
+        console.error("Error loading modern minified pdfjs, trying main entry:", error);
+        try {
+          const pdfjs = await import('pdfjs-dist');
+          const pdfjsLib = pdfjs.default || pdfjs;
+          if (pdfjsLib && typeof pdfjsLib === 'object' && pdfjsLib.getDocument) {
+            pdfjsRef.current = pdfjsLib;
+            if (pdfjsLib.GlobalWorkerOptions) {
+              const version = pdfjsLib.version || '5.6.205';
+              pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+            }
+          } else {
+            throw new Error("Invalid pdfjs object from main entry");
+          }
+        } catch (fallbackError) {
+          console.error("All attempts to load pdfjs failed:", fallbackError);
+        }
       }
     };
     loadPdfJs();
@@ -464,7 +480,7 @@ function NewspaperLayoutContent() {
 
   useEffect(() => {
     // Khởi tạo Worker
-    const worker = new Worker(new URL('@/lib/worker.ts', import.meta.url));
+    const worker = new Worker(new URL('@/lib/worker.ts', import.meta.url), { type: 'module' });
     workerRef.current = Comlink.wrap(worker);
     
     return () => worker.terminate();

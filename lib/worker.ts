@@ -1,5 +1,6 @@
 import * as Comlink from 'comlink';
 import { parseNewspaperLayoutHybrid } from './hlaService';
+import '@/lib/polyfills';
 
 const workerApi = {
   async processLayout(page: any) {

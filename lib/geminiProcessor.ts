@@ -480,46 +480,70 @@ export async function extractArticlesHybrid(
     }))
   }));
 
-  const response = await fetch('/api/extract-articles', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      optimizedZones,
-      pageNumber,
-      fileName,
-      base64Image
-    }),
-  });
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 2000;
 
-  if (!response.ok) {
-    throw new Error('Failed to extract articles from server');
-  }
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch('/api/extract-articles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          optimizedZones,
+          pageNumber,
+          fileName,
+          base64Image
+        }),
+      });
 
-  const { articles } = await response.json();
+      const responseText = await response.text();
+      
+      // Check if response is HTML (server starting up)
+      if (responseText.trim().startsWith('<!doctype html>')) {
+        console.warn(`[DEBUG] Server returned HTML (attempt ${attempt + 1}/${MAX_RETRIES}), retrying...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        continue;
+      }
 
-  // Map to Article type and add missing fields
-  const finalArticles: Article[] = articles.map((art: any, i: number) => {
-    const article: Article = {
-      id: `${fileName}-${pageNumber}-${i}`,
-      articleRegionId: "",
-      title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
-      author: art.author && art.author !== 'null' ? art.author : "",
-      content: (Array.isArray(art.content) ? art.content : [])
-        .map((p: string) => p.trim())
-        .filter((p: string) => p.length > 0 && p !== 'null'),
-      imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
-      seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
-      pageNumbers: [pageNumber],
-      fileName: fileName
-    };
-    
-    if (onArticleParsed) {
-      onArticleParsed(article);
+      if (!response.ok) {
+        console.error(`[DEBUG] API Error (${response.status}):`, responseText.substring(0, 500));
+        throw new Error(`Failed to extract articles from server: ${response.status} ${response.statusText}`);
+      }
+
+      const { articles } = JSON.parse(responseText);
+      
+      // Map to Article type and add missing fields
+      const finalArticles: Article[] = articles.map((art: any, i: number) => {
+        const article: Article = {
+          id: `${fileName}-${pageNumber}-${i}`,
+          articleRegionId: "",
+          title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
+          author: art.author && art.author !== 'null' ? art.author : "",
+          content: (Array.isArray(art.content) ? art.content : [])
+            .map((p: string) => p.trim())
+            .filter((p: string) => p.length > 0 && p !== 'null'),
+          imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
+          seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
+          pageNumbers: [pageNumber],
+          fileName: fileName
+        };
+        
+        if (onArticleParsed) {
+          onArticleParsed(article);
+        }
+        return article;
+      });
+
+      return finalArticles;
+    } catch (error) {
+      console.error(`[DEBUG] Attempt ${attempt + 1} failed:`, error);
+      lastError = error instanceof Error ? error : new Error(String(error));
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
     }
-    return article;
-  });
-
-  return finalArticles;
+  }
+  
+  throw lastError || new Error("Failed to extract articles after retries");
 }

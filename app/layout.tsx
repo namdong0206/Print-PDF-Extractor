@@ -1,3 +1,4 @@
+import '@/lib/polyfills';
 import type {Metadata} from 'next';
 import { Inter, Space_Grotesk, Playfair_Display } from 'next/font/google';
 import Script from 'next/script';

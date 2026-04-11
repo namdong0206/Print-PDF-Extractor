@@ -1,5 +1,5 @@
 {
-  "name": "Nhan Dan Text Extractor",
-  "description": "Hệ thống bóc tách và phân tích bố cục báo in Nhân Dân tự động từ file PDF và hình ảnh.",
+  "name": "AI Newspaper Extractor",
+  "description": "Hệ thống AI chuyên phân tích layout báo in và trích xuất nội dung bài báo từ file PDF tự động.",
   "requestFramePermissions": []
 }
