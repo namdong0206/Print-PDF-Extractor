@@ -95,6 +95,14 @@ export const isSimilarTitle = (t1: string, t2: string) => {
   return getNormalizedTitleSimilarity(s1, s2) >= 0.8;
 };
 
+export const hasPageCues = (seePage: string) => {
+  const cues = [
+    /xem (tiếp )?trang (\d+)/i,
+    /tiếp (theo|từ) trang (\d+)/i
+  ];
+  return cues.some(regex => regex.test(seePage));
+};
+
 export function mergeArticles(articles: Article[]): Article[] {
   const merged: Article[] = [];
   
@@ -173,6 +181,11 @@ export function mergeArticles(articles: Article[]): Article[] {
         const similarity = getTitleSimilarity(a.title, article.title);
         if (similarity < 0.3) return false;
 
+        // BẮT BUỘC: Phải có chỉ dẫn trang mới được ghép
+        if (!hasPageCues(a.seePage || "") || !hasPageCues(article.seePage || "")) {
+          return false;
+        }
+
         const cleanSeePage = (s: string) => s.replace(/[()]/g, "").trim();
         const aSeePage = cleanSeePage(a.seePage || "");
         const artSeePage = cleanSeePage(article.seePage || "");
@@ -212,7 +225,11 @@ export function mergeArticles(articles: Article[]): Article[] {
       const existing = merged[existingIndex];
       
       // Ghép nội dung, tránh lặp lại đoạn văn nếu AI trích xuất trùng
-      const newContent = article.content.filter(p => !existing.content.includes(p));
+      // VÀ xóa bỏ tiêu đề ở phần tiếp theo (kể cả khi tiêu đề nằm ở giữa hoặc có khoảng trắng)
+      const titleRegex = new RegExp(`^\\s*${existing.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'i');
+      const newContent = article.content
+        .map(p => p.replace(titleRegex, '').trim())
+        .filter(p => p.length > 0 && !existing.content.includes(p));
       
       // Xác định thứ tự ghép dựa trên semantic cues hoặc số trang
       const isArticleContinuation = /tiếp theo trang|tiếp từ trang|tiếp theo/i.test(article.seePage || "");

@@ -360,9 +360,7 @@ function NewspaperLayoutContent() {
 
     try {
       // 1. Xóa dữ liệu trên Firestore
-      const querySnapshot = await getDocs(collection(db, 'articles'));
-      const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref));
-      await Promise.all(deletePromises);
+      await clearOldArticles();
 
       // 2. Xóa dữ liệu cục bộ
       localStorage.removeItem('extracted_articles');

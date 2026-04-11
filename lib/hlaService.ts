@@ -194,6 +194,7 @@ export class HLAService {
 
       const merged: HLABlock[] = [];
       let current = { ...zone.blocks[0] };
+      let prevLineStartX = current.items && current.items.length > 0 ? current.items[0].x : current.bbox.x;
 
       for (let i = 1; i < zone.blocks.length; i++) {
         const next = zone.blocks[i];
@@ -209,8 +210,36 @@ export class HLAService {
         const minWidth = Math.min(current.bbox.width, next.bbox.width);
         const hasHorizontalOverlap = overlapX > minWidth * 0.6; // Phải chồng lấn ít nhất 60% chiều rộng
 
-        if (sameLabel && hasHorizontalOverlap && Math.abs(next.bbox.y - (current.bbox.y + current.bbox.height)) < verticalThreshold) {
-          current.text += " " + next.text;
+        const gapY = next.bbox.y - (current.bbox.y + current.bbox.height);
+
+        // Không gộp nếu block tiếp theo là Headline (bắt đầu bài báo mới)
+        if (next.label === 'Headline') {
+          merged.push(current);
+          current = { ...next };
+          prevLineStartX = next.items && next.items.length > 0 ? next.items[0].x : next.bbox.x;
+          continue;
+        }
+
+        if (sameLabel && hasHorizontalOverlap && Math.abs(gapY) < verticalThreshold) {
+          // Nhận diện thụt đầu dòng (Indentation)
+          // So sánh lề trái của dòng mới với lề trái của cột (zone.bbox.x)
+          const nextStartX = next.items && next.items.length > 0 ? next.items[0].x : next.bbox.x;
+          
+          // Thụt lề được định nghĩa là cách lề trái của cột một khoảng đáng kể (0.8 - 1.5 * fontSize)
+          // HOẶC đầu dòng có 2+ ký tự trắng (space) liên tiếp
+          const zoneLeftMargin = zone.blocks.reduce((min, b) => Math.min(min, b.bbox.x), Infinity);
+          const isIndentedBySpace = /^\s{2,}/.test(next.text);
+          const isIndentedByMargin = nextStartX > zoneLeftMargin + (this.baseFontSize * 0.8);
+          const isIndented = isIndentedBySpace || isIndentedByMargin;
+
+          if (isIndented) {
+            current.text += "\n" + next.text.trimStart();
+          } else {
+            current.text += " " + next.text;
+          }
+          
+          prevLineStartX = nextStartX; // Cập nhật lại X của dòng trước đó
+          
           const newMaxX = Math.max(current.bbox.x + current.bbox.width, next.bbox.x + next.bbox.width);
           const newMaxY = Math.max(current.bbox.y + current.bbox.height, next.bbox.y + next.bbox.height);
           current.bbox.x = Math.min(current.bbox.x, next.bbox.x);
@@ -220,6 +249,7 @@ export class HLAService {
         } else {
           merged.push(current);
           current = { ...next };
+          prevLineStartX = current.items && current.items.length > 0 ? current.items[0].x : current.bbox.x;
         }
       }
       merged.push(current);
@@ -454,6 +484,32 @@ export class HLAService {
       data: img
     })));
 
+    // Tạo các block giả cho hình ảnh để đưa vào đồ thị
+    const imageBlocks: HLABlock[] = vectorData.images.map((img, idx) => ({
+      id: `img-block-${idx}`,
+      text: '[IMAGE]',
+      bbox: { x: img.x, y: img.y, width: img.width, height: img.height },
+      fontSize: 10, // dummy
+      fontName: 'Image',
+      isBold: false,
+      isIndented: false,
+      label: 'Image',
+      items: []
+    }));
+
+    const allNodes = [...blocks, ...imageBlocks];
+
+    // Cập nhật blockTree với allNodes
+    this.blockTree.clear();
+    this.blockTree.load(allNodes.map(b => ({
+      minX: b.bbox.x,
+      minY: b.bbox.y,
+      maxX: b.bbox.x + b.bbox.width,
+      maxY: b.bbox.y + b.bbox.height,
+      id: b.id,
+      data: b
+    })));
+
     // Ước tính chiều rộng cột (Column Width) dựa trên các block văn bản
     const blockWidths = blocks.map(b => b.bbox.width).sort((a, b) => a - b);
     const medianBlockWidth = blockWidths[Math.floor(blockWidths.length / 2)] || 100;
@@ -494,12 +550,12 @@ export class HLAService {
 
     // Khởi tạo đồ thị: danh sách kề
     const adj: Map<string, string[]> = new Map();
-    blocks.forEach(b => adj.set(b.id, []));
+    allNodes.forEach(b => adj.set(b.id, []));
 
     // Duyệt qua từng block để tìm hàng xóm và vẽ cạnh
-    blocks.forEach(block => {
+    allNodes.forEach(block => {
       const thresholdX = 30; // Ngưỡng khoảng cách ngang
-      const thresholdY = block.fontSize * 2.5; // Ngưỡng khoảng cách dọc (linh hoạt theo font size)
+      const thresholdY = block.label === 'Image' ? 40 : block.fontSize * 2.5; // Ngưỡng khoảng cách dọc linh hoạt
 
       const searchArea = {
         minX: block.bbox.x - thresholdX,
@@ -525,10 +581,10 @@ export class HLAService {
         const p2 = { x: neighbor.bbox.x + neighbor.bbox.width / 2, y: neighbor.bbox.y + neighbor.bbox.height / 2 };
 
         const lineBBox = {
-          minX: Math.min(p1.x, p2.x) - 2,
-          minY: Math.min(p1.y, p2.y) - 2,
-          maxX: Math.max(p1.x, p2.x) + 2,
-          maxY: Math.max(p1.y, p2.y) + 2
+          minX: Math.min(p1.x, p2.x) - 5, // Tăng padding để bắt các đường kẻ mảnh
+          minY: Math.min(p1.y, p2.y) - 5,
+          maxX: Math.max(p1.x, p2.x) + 5,
+          maxY: Math.max(p1.y, p2.y) + 5
         };
 
         const potentialSeparators = vectorTree.search(lineBBox);
@@ -570,7 +626,7 @@ export class HLAService {
     const visited = new Set<string>();
     const components: HLABlock[][] = [];
 
-    blocks.forEach(block => {
+    allNodes.forEach(block => {
       if (!visited.has(block.id)) {
         const component: HLABlock[] = [];
         const queue = [block.id];
@@ -578,11 +634,20 @@ export class HLAService {
 
         while (queue.length > 0) {
           const currId = queue.shift()!;
-          const currBlock = blocks.find(b => b.id === currId)!;
+          const currBlock = allNodes.find(b => b.id === currId)!;
           component.push(currBlock);
 
           adj.get(currId)?.forEach(neighborId => {
             if (!visited.has(neighborId)) {
+              const neighbor = allNodes.find(b => b.id === neighborId)!;
+              
+              // Logic kiểm tra: Không gộp nếu gặp Headline mới
+              // Nếu block hiện tại là Headline hoặc Image, và neighbor cũng là Headline, 
+              // thì không nên gộp chúng vào cùng một bài báo.
+              if ((currBlock.label === 'Headline' || currBlock.label === 'Image') && neighbor.label === 'Headline') {
+                return;
+              }
+
               visited.add(neighborId);
               queue.push(neighborId);
             }
@@ -872,9 +937,7 @@ export class HLAService {
 
     zones.forEach(zone => {
       zone.blocks.forEach(block => {
-        if (block.bbox.x > zone.bbox.x + 4 && block.fontSize <= this.baseFontSize + 1) {
-          block.isIndented = true;
-        }
+        if (block.label === 'Image') return;
 
         const text = block.text.trim();
         const isUppercase = text.length > 0 && text === text.toUpperCase() && /[A-ZĂÂĐÊÔƠƯÀẢÃÁẠẰẲẴẮẶẦẨẪẤẬÈẺẼÉẸỀỂỄẾỆÌỈĨÍỊÒỎÕÓỌỒỔỖỐỘỜỞỠỚỢÙỦŨÚỤỪỬỮỨỰỲỶỸÝỴ]/.test(text);
@@ -912,16 +975,7 @@ export class HLAService {
       });
 
       const hasContent = zone.blocks.some(b => b.label === 'Content' || b.label === 'Headline' || b.label === 'Sapo' || b.label === 'PageCue');
-      
-      // Sử dụng R-Tree để tìm ảnh trong zone
-      const searchArea = {
-        minX: zone.bbox.x - 5,
-        minY: zone.bbox.y - 5,
-        maxX: zone.bbox.x + zone.bbox.width + 5,
-        maxY: zone.bbox.y + zone.bbox.height + 5
-      };
-      const imagesInZone = this.imageTree.search(searchArea);
-      const hasImage = imagesInZone.length > 0;
+      const hasImage = zone.blocks.some(b => b.label === 'Image');
       
       zone.type = hasContent ? 'article' : (hasImage ? 'advertisement' : 'unknown');
     });
