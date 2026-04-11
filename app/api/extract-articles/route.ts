@@ -46,6 +46,9 @@ async function sleep(ms: number) {
 export async function POST(req: Request) {
   try {
     const { optimizedZones, pageNumber, fileName, base64Image } = await req.json();
+    console.log(`[API] Extracting articles for ${fileName} (Page ${pageNumber})`);
+    console.log(`[API] Zones count: ${optimizedZones.length}, Image size: ${base64Image ? Math.round(base64Image.length / 1024) : 0} KB`);
+    
     const apiKeys = getApiKeys();
 
     const jsonPayload = JSON.stringify(optimizedZones);

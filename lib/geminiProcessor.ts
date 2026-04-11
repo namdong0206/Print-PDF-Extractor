@@ -64,6 +64,10 @@ const getLongestCommonSubstringLen = (s1: string, s2: string): number => {
 export const getTitleSimilarity = (t1: string, t2: string) => {
   const s1 = normalize(t1);
   const s2 = normalize(t2);
+  return getNormalizedTitleSimilarity(s1, s2);
+};
+
+export const getNormalizedTitleSimilarity = (s1: string, s2: string) => {
   if (s1 === s2) return 1;
   
   const minLen = Math.min(s1.length, s2.length);
@@ -77,7 +81,18 @@ export const getTitleSimilarity = (t1: string, t2: string) => {
 
 // Hàm kiểm tra độ tương đồng phần đầu (ít nhất 80%)
 export const isSimilarTitle = (t1: string, t2: string) => {
-  return getTitleSimilarity(t1, t2) >= 0.8;
+  const s1 = normalize(t1);
+  const s2 = normalize(t2);
+  
+  if (s1 === s2) return true;
+  
+  const maxLen = Math.max(s1.length, s2.length);
+  const minLen = Math.min(s1.length, s2.length);
+  
+  // Nếu độ lệch chiều dài > 25%, không thể tương đồng >= 80%
+  if (maxLen > 0 && (maxLen - minLen) / maxLen > 0.25) return false;
+  
+  return getNormalizedTitleSimilarity(s1, s2) >= 0.8;
 };
 
 export function mergeArticles(articles: Article[]): Article[] {
@@ -142,7 +157,15 @@ export function mergeArticles(articles: Article[]): Article[] {
   };
 
   for (const article of articles) {
-    let existingIndex = merged.findIndex(a => isSimilarTitle(a.title, article.title));
+    if (article.title.startsWith('[UNASSIGNED_BLOCKS]')) {
+      merged.push(article);
+      continue;
+    }
+
+    let existingIndex = merged.findIndex(a => {
+      if (a.title.startsWith('[UNASSIGNED_BLOCKS]')) return false;
+      return isSimilarTitle(a.title, article.title);
+    });
     
     if (existingIndex === -1) {
       // Try to match by seePage cues if title matching fails but similarity is at least 30%
@@ -486,6 +509,9 @@ export async function extractArticlesHybrid(
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+
       const response = await fetch('/api/extract-articles', {
         method: 'POST',
         headers: {
@@ -497,8 +523,10 @@ export async function extractArticlesHybrid(
           fileName,
           base64Image
         }),
+        signal: controller.signal
       });
 
+      clearTimeout(timeoutId);
       const responseText = await response.text();
       
       // Check if response is HTML (server starting up)

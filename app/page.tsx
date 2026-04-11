@@ -350,6 +350,58 @@ function NewspaperLayoutContent() {
     }
   };
 
+  const handleNewSession = async () => {
+    if (!window.confirm("Bạn có chắc chắn muốn bắt đầu phiên làm việc mới? Toàn bộ dữ liệu cũ trên server và máy cục bộ sẽ bị xóa.")) {
+      return;
+    }
+
+    setIsProcessing(true);
+    setToastMessage("Đang xóa dữ liệu cũ...");
+
+    try {
+      // 1. Xóa dữ liệu trên Firestore
+      const querySnapshot = await getDocs(collection(db, 'articles'));
+      const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
+
+      // 2. Xóa dữ liệu cục bộ
+      localStorage.removeItem('extracted_articles');
+      setArticles([]);
+      setFiles([]);
+      setCurrentFileIndex(-1);
+      setPdf(null);
+      setCurrentPage(1);
+      setNumPages(0);
+      setPageImage(null);
+      setMaskImage(null);
+      setArticleRegions([]);
+      setGroupBoxedBoxes(new Map());
+      setSelectedArticleRegion(null);
+      setProcessingFileIndices(new Set());
+      setCompletedFileIndices(new Set());
+      setBoxes([]);
+      setRegions([]);
+      setSelectedBox(null);
+      setSelectedArticle(null);
+      setViewMode('all');
+      setFilteredFile(null);
+      setSelectedFiles(new Set());
+      setHlaZones([]);
+      unassignedBlocksRef.current = [];
+      setProcessingTime(null);
+      setElapsedTime(0);
+
+      setToastMessage("Đã xóa toàn bộ dữ liệu cũ. Sẵn sàng cho phiên mới.");
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (error) {
+      console.error("Error clearing data:", error);
+      setToastMessage("Lỗi khi xóa dữ liệu.");
+      setTimeout(() => setToastMessage(null), 3000);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFiles = event.target.files;
     if (!uploadedFiles || uploadedFiles.length === 0) return;
@@ -588,17 +640,7 @@ function NewspaperLayoutContent() {
         return;
       }
       
-      setArticles(prev => {
-        const merged = mergeArticles([...prev, article]);
-        
-        // Find the merged version of this article to save to Firestore
-        const mergedArticle = merged.find(a => isSimilarTitle(a.title, article.title));
-        if (mergedArticle) {
-          setDoc(doc(db, 'articles', mergedArticle.id), mergedArticle).catch(e => console.error("Error saving article:", e));
-        }
-        
-        return merged;
-      });
+      setArticles(prev => mergeArticles([...prev, article]));
     };
 
     const processNext = async (): Promise<void> => {
@@ -621,8 +663,8 @@ function NewspaperLayoutContent() {
         
         // Render to image for Gemini
         const viewport = page.getViewport({ scale: 1.0 });
-        const MAX_WIDTH = 1600;
-        let scale = 2.0;
+        const MAX_WIDTH = 1024;
+        let scale = 1.5;
         if (viewport.width * scale > MAX_WIDTH) {
           scale = MAX_WIDTH / viewport.width;
         }
@@ -634,7 +676,7 @@ function NewspaperLayoutContent() {
         
         if (context) {
           await page.render({ canvasContext: context, viewport: renderViewport }).promise;
-          const image = canvas.toDataURL('image/webp', 0.8);
+          const image = canvas.toDataURL('image/webp', 0.6);
           // Pass 1 as the document page number, but index + 1 as the metadata page number
           const fileArticles = await handleExtractArticles(pdfDoc, image, 1, file.name, handleArticleParsed, index + 1);
           results.push(...fileArticles);
@@ -702,6 +744,11 @@ function NewspaperLayoutContent() {
       setArticles(finalArticles);
       localStorage.setItem('extracted_articles', JSON.stringify(finalArticles));
       
+      // Save all merged articles to Firestore at once
+      const savePromises = merged.filter(a => !a.title.startsWith('[UNASSIGNED_BLOCKS]'))
+        .map(a => setDoc(doc(db, 'articles', a.id), a).catch(e => console.error("Error saving article:", e)));
+      await Promise.all(savePromises);
+      
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
       playTingSound();
@@ -755,6 +802,11 @@ function NewspaperLayoutContent() {
       
       setArticles(finalArticles);
       localStorage.setItem('extracted_articles', JSON.stringify(finalArticles));
+      
+      // Save all merged articles to Firestore at once
+      const savePromises = merged.filter(a => !a.title.startsWith('[UNASSIGNED_BLOCKS]'))
+        .map(a => setDoc(doc(db, 'articles', a.id), a).catch(e => console.error("Error saving article:", e)));
+      await Promise.all(savePromises);
       
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
@@ -857,6 +909,14 @@ function NewspaperLayoutContent() {
         </div>
         
         <div className="flex items-center gap-4">
+          <button 
+            onClick={handleNewSession}
+            disabled={isProcessing}
+            className="flex items-center gap-2 bg-red-50 text-red-600 px-4 py-2 rounded-full hover:bg-red-100 transition-colors text-sm font-medium border border-red-100"
+          >
+            <AlertCircle size={18} />
+            Phiên mới
+          </button>
           {(isProcessing || isExtracting) ? (
             <div className="flex items-center gap-2 text-sm text-gray-600 font-medium bg-gray-100 px-3 py-1.5 rounded-full">
               <span className="text-[#F27D26] animate-pulse">⏱</span>
