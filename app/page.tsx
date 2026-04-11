@@ -629,7 +629,7 @@ function NewspaperLayoutContent() {
     setSelectedFiles(newSelection);
   };
 
-  const processInParallel = async (indices: number[], concurrency: number = 2) => {
+  const processInParallel = async (indices: number[], concurrency: number = 5) => {
     const results: Article[] = [];
     let currentIndex = 0;
     let quotaError: any = null;
@@ -640,7 +640,31 @@ function NewspaperLayoutContent() {
         return;
       }
       
-      setArticles(prev => mergeArticles([...prev, article]));
+      setArticles(prev => {
+        // Incremental merge to avoid O(N^3) complexity
+        const existingIndex = prev.findIndex(a => {
+          if (a.title.startsWith('[UNASSIGNED_BLOCKS]')) return false;
+          return isSimilarTitle(a.title, article.title);
+        });
+
+        if (existingIndex !== -1) {
+          const newArticles = [...prev];
+          const existing = newArticles[existingIndex];
+          
+          // Merge content and page numbers
+          newArticles[existingIndex] = {
+            ...existing,
+            content: [...existing.content, ...article.content],
+            pageNumbers: Array.from(new Set([...existing.pageNumbers, ...article.pageNumbers])).sort((a, b) => a - b),
+            seePage: article.seePage || existing.seePage,
+            author: article.author || existing.author,
+            imageCaption: article.imageCaption || existing.imageCaption
+          };
+          return newArticles;
+        } else {
+          return [...prev, article];
+        }
+      });
     };
 
     const processNext = async (): Promise<void> => {
@@ -888,8 +912,6 @@ function NewspaperLayoutContent() {
       default: return 'stroke-gray-400 fill-gray-400/20 text-gray-800';
     }
   };
-
-  if (!isClient) return <div className="min-h-screen bg-[#FDFCFB]" />;
 
   if (!isClient) return <div className="min-h-screen bg-[#FDFCFB]" />;
 

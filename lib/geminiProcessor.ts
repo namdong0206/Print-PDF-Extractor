@@ -485,7 +485,7 @@ export async function extractArticlesHybrid(
   
   // Làm sạch dữ liệu gửi đi
   const cleanedZones = zones
-    .filter(zone => zone.type === 'article' || zone.type === 'unknown')
+    .filter(zone => zone.type !== 'header' && zone.type !== 'footer')
     .map(zone => {
       return {
         ...zone,
