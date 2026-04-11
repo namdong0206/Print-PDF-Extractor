@@ -197,6 +197,7 @@ function NewspaperLayoutContent() {
   const [filteredFile, setFilteredFile] = useState<File | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<number>>(new Set());
   const [hlaZones, setHlaZones] = useState<HLAZone[]>([]);
+  const unassignedBlocksRef = useRef<Article[]>([]);
   
   const filteredArticles = useMemo(() => {
     if (!filteredFile) return articles;
@@ -582,6 +583,11 @@ function NewspaperLayoutContent() {
     let quotaError: any = null;
     
     const handleArticleParsed = (article: Article) => {
+      if (article.title.startsWith('[UNASSIGNED_BLOCKS]')) {
+        unassignedBlocksRef.current.push(article);
+        return;
+      }
+      
       setArticles(prev => {
         const merged = mergeArticles([...prev, article]);
         
@@ -671,6 +677,7 @@ function NewspaperLayoutContent() {
     if (selectedFiles.size === 0) return;
     
     setArticles([]);
+    unassignedBlocksRef.current = [];
     setCompletedFileIndices(new Set());
     setProcessingTime(null);
     setIsProcessing(true);
@@ -684,8 +691,16 @@ function NewspaperLayoutContent() {
 
       const allArticles = await processInParallel(indices);
       const merged = mergeArticles(allArticles);
-      setArticles(merged);
-      localStorage.setItem('extracted_articles', JSON.stringify(merged));
+      
+      // Filter out unassigned blocks from merged results (though they shouldn't be there if handleArticleParsed worked)
+      // and then append all collected unassigned blocks at the end
+      const finalArticles = [
+        ...merged.filter(a => !a.title.startsWith('[UNASSIGNED_BLOCKS]')),
+        ...unassignedBlocksRef.current
+      ];
+      
+      setArticles(finalArticles);
+      localStorage.setItem('extracted_articles', JSON.stringify(finalArticles));
       
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
@@ -698,8 +713,12 @@ function NewspaperLayoutContent() {
         const partialArticles = error.partialArticles || [];
         if (partialArticles.length > 0) {
           const merged = mergeArticles(partialArticles);
-          setArticles(merged);
-          localStorage.setItem('extracted_articles', JSON.stringify(merged));
+          const finalArticles = [
+            ...merged.filter(a => !a.title.startsWith('[UNASSIGNED_BLOCKS]')),
+            ...unassignedBlocksRef.current
+          ];
+          setArticles(finalArticles);
+          localStorage.setItem('extracted_articles', JSON.stringify(finalArticles));
           setViewMode('articles');
         }
         alert(error.message);
@@ -714,6 +733,7 @@ function NewspaperLayoutContent() {
 
   const handleExtractAll = async () => {
     setArticles([]);
+    unassignedBlocksRef.current = [];
     setCompletedFileIndices(new Set());
     setProcessingTime(null);
     setIsProcessing(true);
@@ -727,8 +747,14 @@ function NewspaperLayoutContent() {
 
       const allArticles = await processInParallel(sortedIndices);
       const merged = mergeArticles(allArticles);
-      setArticles(merged);
-      localStorage.setItem('extracted_articles', JSON.stringify(merged));
+      
+      const finalArticles = [
+        ...merged.filter(a => !a.title.startsWith('[UNASSIGNED_BLOCKS]')),
+        ...unassignedBlocksRef.current
+      ];
+      
+      setArticles(finalArticles);
+      localStorage.setItem('extracted_articles', JSON.stringify(finalArticles));
       
       setViewMode('articles');
       setProcessingTime((Date.now() - startTime) / 1000);
@@ -741,8 +767,12 @@ function NewspaperLayoutContent() {
         const partialArticles = error.partialArticles || [];
         if (partialArticles.length > 0) {
           const merged = mergeArticles(partialArticles);
-          setArticles(merged);
-          localStorage.setItem('extracted_articles', JSON.stringify(merged));
+          const finalArticles = [
+            ...merged.filter(a => !a.title.startsWith('[UNASSIGNED_BLOCKS]')),
+            ...unassignedBlocksRef.current
+          ];
+          setArticles(finalArticles);
+          localStorage.setItem('extracted_articles', JSON.stringify(finalArticles));
           setViewMode('articles');
         }
         alert(error.message);

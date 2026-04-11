@@ -74,7 +74,7 @@ export async function POST(req: Request) {
     - Trích xuất ĐẦY ĐỦ 100% văn bản, không tóm tắt.
     - Tìm chỉ dẫn chuyển trang (ví dụ: "(Xem tiếp trang 5)") đưa vào trường 'sp'.
     - Tìm Dropcap và ghép vào từ đầu tiên.
-    - NẾU CÓ CÁC KHỐI VĂN BẢN (độ dài >= 100 ký tự) KHÔNG THUỘC VỀ BÀI BÁO NÀO, hãy trích xuất chúng thành một bài báo riêng với tiêu đề: "Bài trang ${pageNumber} không tìm thấy nguồn ghép".
+    - NẾU CÓ CÁC KHỐI VĂN BẢN (độ dài >= 100 ký tự) KHÔNG THUỘC VỀ BÀI BÁO NÀO, hãy trích xuất chúng thành một bài báo riêng với tiêu đề: "[UNASSIGNED_BLOCKS] Trang ${pageNumber}".
     
     DỮ LIỆU TEXT (JSON ZONES):
     ${jsonPayload}

@@ -937,19 +937,21 @@ export const parseNewspaperLayoutHybrid = async (page: any): Promise<{ zones: HL
     const vectorData = await extractVectorData(page);
 
     const textContent = await page.getTextContent();
-    const textItems = textContent.items.map((item: any) => {
-      const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
-      return {
-        text: item.str,
-        x: item.transform[4],
-        y: pageHeight - item.transform[5] - fontSize,
-        width: item.width,
-        height: fontSize,
-        fontSize,
-        fontName: item.fontName,
-        isBold: item.fontName.toLowerCase().includes('bold') || item.fontName.toLowerCase().includes('heavy')
-      };
-    });
+    const textItems = textContent.items
+      .map((item: any) => {
+        const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
+        return {
+          text: item.str,
+          x: item.transform[4],
+          y: pageHeight - item.transform[5] - fontSize,
+          width: item.width,
+          height: fontSize,
+          fontSize,
+          fontName: item.fontName,
+          isBold: item.fontName.toLowerCase().includes('bold') || item.fontName.toLowerCase().includes('heavy')
+        };
+      })
+      .filter((item: any) => item.text.trim().length > 0);
 
     const hlaService = new HLAService();
     const zones = await hlaService.analyze(textItems, vectorData, pageWidth, pageHeight);
