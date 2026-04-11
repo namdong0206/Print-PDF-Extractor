@@ -506,14 +506,50 @@ function NewspaperLayoutContent() {
         await setCache('layoutCache', cacheKey, result);
       }
 
-      setBoxes(result.boxes);
-      setMaskImage(result.maskImage || null);
-      setArticleRegions(result.cells || []);
+      setPageSize({ width: result.pageWidth, height: result.pageHeight });
       
-      if (result.cells) {
-        const grouped = groupBoxesByArticleRegion(result.boxes, result.cells);
-        setGroupBoxedBoxes(grouped);
-      }
+      // Convert HLAZones to BoundingBoxes and ArticleRegions
+      const allBoxes: BoundingBox[] = [];
+      const allArticleRegions: ArticleRegion[] = [];
+      
+      result.zones.forEach((zone: any) => {
+        // Add blocks as BoundingBoxes
+        zone.blocks.forEach((block: any) => {
+          allBoxes.push({
+            id: block.id,
+            x: block.bbox.x,
+            y: block.bbox.y,
+            width: block.bbox.width,
+            height: block.bbox.height,
+            label: block.label as any,
+            confidence: 1.0,
+            text: block.text,
+            fontSize: block.fontSize,
+            fontName: block.fontName,
+            isBold: block.isBold
+          });
+        });
+        
+        // Add zone as ArticleRegion
+        allArticleRegions.push({
+          id: zone.id,
+          bbox: zone.bbox,
+          polygon: [
+            { x: zone.bbox.x, y: zone.bbox.y },
+            { x: zone.bbox.x + zone.bbox.width, y: zone.bbox.y },
+            { x: zone.bbox.x + zone.bbox.width, y: zone.bbox.y + zone.bbox.height },
+            { x: zone.bbox.x, y: zone.bbox.y + zone.bbox.height }
+          ]
+        });
+      });
+
+      setBoxes(allBoxes);
+      setMaskImage(null); // HLA doesn't provide mask image
+      setArticleRegions(allArticleRegions);
+      setHlaZones(result.zones);
+      
+      const grouped = groupBoxesByArticleRegion(allBoxes, allArticleRegions);
+      setGroupBoxedBoxes(grouped);
       
       setViewMode('boxes');
     } catch (error) {
@@ -525,7 +561,7 @@ function NewspaperLayoutContent() {
 
   const handleSegmentRegions = () => {
     if (boxes.length === 0) return;
-    const segmented = segmentRegions(boxes);
+    const segmented = segmentRegions(boxes, pageSize.height);
     setRegions(segmented);
     setViewMode('regions');
   };

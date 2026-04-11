@@ -213,7 +213,7 @@ export const groupTextBlocksIntoArticles = (textBlocks: TextBlock[], regions: Ar
       title: sortedBoxes[0]?.text || "Không có tiêu đề",
       author: "",
       content: sortedBoxes.map(b => b.text || ""),
-      imageCaption: [],
+      imageCaption: "",
       seePage: "",
       pageNumbers: [pageNumber]
     };
