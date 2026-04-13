@@ -346,11 +346,14 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
       // Tính toán khoảng cách X giữa kết thúc của currentLine và bắt đầu của nextItem
       const gap = nextItem.x - (currentLine.x + (currentLine.w || 0));
       
-      // Ngưỡng chẻ dọc (Vertical Split) dựa trên khoảng trống giữa các cột (mặc định 40)
-      const minGap = 40; 
+      // Ngưỡng chẻ dọc (Vertical Split) dựa trên khoảng trống giữa các cột (giảm xuống 20 để tách cột nhạy hơn)
+      const minGap = 20; 
       const isLargeGap = gap > minGap;
 
-      if (sameLine && !isLargeGap) {
+      // Thêm điều kiện: Nếu là tiêu đề lớn, không bao giờ gom ngang
+      const isLargeHeadline = currentLine.fs > 20 || nextItem.fs > 20;
+
+      if (sameLine && !isLargeGap && !isLargeHeadline) {
         currentLine.t += " " + nextItem.t;
         // Cập nhật chiều rộng tổng cộng của dòng
         currentLine.w = (nextItem.x + (nextItem.w || 0)) - currentLine.x;
