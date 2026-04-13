@@ -382,7 +382,10 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
       // Tiêu đề (Headline) luôn đứng riêng
       const isHeadline = currentPara.fs > 15;
 
-      if (sameColumn && closeVertical && sameStyle && !isHeadline) {
+      // Kiểm tra thụt đầu dòng bằng space (2+ spaces)
+      const hasIndentation = /^\s{2,}/.test(nextLine.t);
+
+      if (sameColumn && closeVertical && sameStyle && !isHeadline && !hasIndentation) {
         currentPara.t += " " + nextLine.t;
       } else {
         paragraphBlocks.push(currentPara);
