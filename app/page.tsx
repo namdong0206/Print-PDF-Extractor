@@ -207,6 +207,7 @@ function NewspaperLayoutContent() {
   const [pageSize, setPageSize] = useState({ width: 600, height: 800 });
   const [processingTime, setProcessingTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const playTingSound = () => {
@@ -351,10 +352,11 @@ function NewspaperLayoutContent() {
   };
 
   const handleNewSession = async () => {
-    if (!window.confirm("Bạn có chắc chắn muốn bắt đầu phiên làm việc mới? Toàn bộ dữ liệu cũ trên server và máy cục bộ sẽ bị xóa.")) {
-      return;
-    }
+    setShowConfirm(true);
+  };
 
+  const performNewSession = async () => {
+    setShowConfirm(false);
     setIsProcessing(true);
     setToastMessage("Đang xóa dữ liệu cũ...");
 
@@ -627,7 +629,7 @@ function NewspaperLayoutContent() {
     setSelectedFiles(newSelection);
   };
 
-  const processInParallel = async (indices: number[], concurrency: number = 5) => {
+  const processInParallel = async (indices: number[], concurrency: number = 2) => {
     const results: Article[] = [];
     let currentIndex = 0;
     let quotaError: any = null;
@@ -753,7 +755,7 @@ function NewspaperLayoutContent() {
         files[a].name.localeCompare(files[b].name, undefined, { numeric: true, sensitivity: 'base' })
       );
 
-      const allArticles = await processInParallel(indices);
+      const allArticles = await processInParallel(indices, 3);
       const merged = mergeArticles(allArticles);
       
       // Filter out unassigned blocks from merged results (though they shouldn't be there if handleArticleParsed worked)
@@ -1139,6 +1141,18 @@ function NewspaperLayoutContent() {
           </div>
         </div>
       </main>
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-6">
+          <div className="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full">
+            <h3 className="text-lg font-bold mb-4">Xác nhận phiên mới</h3>
+            <p className="text-gray-600 mb-6">Bạn có chắc chắn muốn bắt đầu phiên làm việc mới? Toàn bộ dữ liệu cũ trên server và máy cục bộ sẽ bị xóa.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setShowConfirm(false)} className="flex-1 py-2 rounded-full border border-gray-200 hover:bg-gray-100">Hủy</button>
+              <button onClick={performNewSession} className="flex-1 py-2 rounded-full bg-red-600 text-white hover:bg-red-700">Xác nhận</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -97,8 +97,8 @@ export const isSimilarTitle = (t1: string, t2: string) => {
 
 export const hasPageCues = (seePage: string) => {
   const cues = [
-    /xem (tiếp )?trang (\d+)/i,
-    /tiếp (theo|từ) trang (\d+)/i
+    /xem trang (\d+)/i,
+    /tiếp theo trang (\d+)/i
   ];
   return cues.some(regex => regex.test(seePage));
 };
@@ -232,11 +232,11 @@ export function mergeArticles(articles: Article[]): Article[] {
         .filter(p => p.length > 0 && !existing.content.includes(p));
       
       // Xác định thứ tự ghép dựa trên semantic cues hoặc số trang
-      const isArticleContinuation = /tiếp theo trang|tiếp từ trang|tiếp theo/i.test(article.seePage || "");
-      const isArticleStart = /xem trang|xem tiếp trang|xem tiếp/i.test(article.seePage || "");
+      const isArticleContinuation = /tiếp theo trang/i.test(article.seePage || "");
+      const isArticleStart = /xem trang/i.test(article.seePage || "");
       
-      const isExistingContinuation = /tiếp theo trang|tiếp từ trang|tiếp theo/i.test(existing.seePage || "");
-      const isExistingStart = /xem trang|xem tiếp trang|xem tiếp/i.test(existing.seePage || "");
+      const isExistingContinuation = /tiếp theo trang/i.test(existing.seePage || "");
+      const isExistingStart = /xem trang/i.test(existing.seePage || "");
 
       let append = true;
       
@@ -527,7 +527,7 @@ export async function extractArticlesHybrid(
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+      const timeoutId = setTimeout(() => controller.abort(new Error("Request timed out after 5 minutes")), 300000); // 5 minute timeout
 
       const response = await fetch('/api/extract-articles', {
         method: 'POST',
