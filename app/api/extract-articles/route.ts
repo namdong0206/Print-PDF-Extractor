@@ -75,7 +75,7 @@ export async function POST(req: Request) {
     - Loại bỏ Header/Footer/Quảng cáo/Số trang.
     - Giữ nguyên tiêu đề gốc.
     - Trích xuất ĐẦY ĐỦ 100% văn bản, không tóm tắt.
-    - Tìm chỉ dẫn chuyển trang (ví dụ: "(Xem trang 5)" hoặc "(Tiếp theo trang 1)") đưa vào trường 'sp'.
+        - Tìm chỉ dẫn chuyển trang (ví dụ: "(Xem trang 5)" hoặc "(Tiếp theo trang 1)") đưa vào trường 'sp'.
     - Tìm Dropcap và ghép vào từ đầu tiên.
     - TRÁNH TỐI ĐA việc sử dụng "[UNASSIGNED_BLOCKS]". Nếu có tiêu đề, ảnh, hoặc chú thích, hãy coi đó là một bài báo. Chỉ sử dụng "[UNASSIGNED_BLOCKS]" cho các đoạn văn bản rời rạc, không có tiêu đề và không thuộc về bất kỳ bài báo nào (độ dài >= 500 ký tự).
     - Không được tự ý thêm dấu hai chấm (:) vào cuối các tiêu đề phụ trong các cột nội dung và không nối tiêu đề phụ này vào các đoạn tiếp theo.

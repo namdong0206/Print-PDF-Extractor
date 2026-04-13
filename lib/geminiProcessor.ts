@@ -368,11 +368,17 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
     const paragraphBlocks: TextBlock[] = [];
     let currentPara = { ...lineBlocks[0] };
 
+    // Helper để tính x không tính ký tự trắng
+    const getEffectiveX = (block: TextBlock) => {
+      const leadingSpaces = (block.t.match(/^\s*/) || [''])[0].length;
+      return block.x - (leadingSpaces * (block.fs * 0.3));
+    };
+
     for (let i = 1; i < lineBlocks.length; i++) {
       const nextLine = lineBlocks[i];
       
       // Cùng cột (x gần nhau)
-      const sameColumn = Math.abs(currentPara.x - nextLine.x) < 60;
+      const sameColumn = Math.abs(getEffectiveX(currentPara) - getEffectiveX(nextLine)) < 60;
       // Khoảng cách dòng (y gần nhau)
       const closeVertical = Math.abs(nextLine.y - (currentPara.y + currentPara.fs)) < 45;
       // Cùng kiểu font hoặc đều là font nhỏ (body text)
