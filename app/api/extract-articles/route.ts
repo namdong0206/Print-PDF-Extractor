@@ -79,6 +79,7 @@ export async function POST(req: Request) {
     - Tìm Dropcap và ghép vào từ đầu tiên.
     - TRÁNH TỐI ĐA việc sử dụng "[UNASSIGNED_BLOCKS]". Nếu có tiêu đề, ảnh, hoặc chú thích, hãy coi đó là một bài báo. Chỉ sử dụng "[UNASSIGNED_BLOCKS]" cho các đoạn văn bản rời rạc, không có tiêu đề và không thuộc về bất kỳ bài báo nào (độ dài >= 500 ký tự).
     - Không được tự ý thêm dấu hai chấm (:) vào cuối các tiêu đề phụ trong các cột nội dung và không nối tiêu đề phụ này vào các đoạn tiếp theo.
+    - Một số phần nội dung sử dụng các ký tự nghiếng (Italic), bởi vậy không bỏ qua các khối ký tự nghiêng có độ dài trên 200 ký tự.
     
     DỮ LIỆU TEXT (JSON ZONES):
     ${jsonPayload}
