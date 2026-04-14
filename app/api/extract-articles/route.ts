@@ -1,6 +1,30 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
-import { Article } from '@/lib/geminiProcessor'; // Need to make sure this is accessible
+import { Article } from '@/lib/geminiProcessor';
+import fs from 'fs';
+import path from 'path';
+
+const CONFIG_FILE = path.join(process.cwd(), 'gemini-config.json');
+
+function getWorkingConfig() {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+    }
+  } catch (e) {
+    console.error("[CONFIG] Error reading config file", e);
+  }
+  return { apiKeyIndex: 0, modelIndex: 0 };
+}
+
+function saveWorkingConfig(apiKeyIndex: number, modelIndex: number) {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ apiKeyIndex, modelIndex }));
+    console.log(`[CONFIG] Saved working config: KeyIndex=${apiKeyIndex}, ModelIndex=${modelIndex}`);
+  } catch (e) {
+    console.error("[CONFIG] Error writing config file", e);
+  }
+}
 
 // Need to define the API key loading logic on the server
 function getApiKeys(): string[] {
@@ -49,8 +73,6 @@ export async function POST(req: Request) {
     console.log(`[API] Extracting articles for ${fileName} (Page ${pageNumber})`);
     console.log(`[API] Zones count: ${optimizedZones.length}, Image size: ${base64Image ? Math.round(base64Image.length / 1024) : 0} KB`);
     
-    const apiKeys = getApiKeys();
-
     const jsonPayload = JSON.stringify(optimizedZones);
     
     const prompt = `
@@ -97,24 +119,37 @@ export async function POST(req: Request) {
       contents.push({ parts: [{ text: prompt }] });
     }
 
+    const apiKeys = getApiKeys();
     const modelsToTry = [
       "gemini-3.1-flash-lite-preview",
       "gemini-3-flash-preview",
       "gemini-3.1-pro-preview"
     ];
 
+    const config = getWorkingConfig();
     let finalArticles: any[] = [];
     let success = false;
     let lastError = null;
 
-    for (const apiKey of apiKeys) {
-      for (const model of modelsToTry) {
+    const startKeyIdx = config.apiKeyIndex % apiKeys.length;
+    const startModelIdx = config.modelIndex % modelsToTry.length;
+
+    for (let i = 0; i < apiKeys.length; i++) {
+      const keyIdx = (startKeyIdx + i) % apiKeys.length;
+      const apiKey = apiKeys[keyIdx];
+      
+      for (let j = 0; j < modelsToTry.length; j++) {
+        // Nếu là key đầu tiên thì bắt đầu từ model index đã lưu, các key sau bắt đầu từ 0
+        const modelIdx = (i === 0) ? (startModelIdx + j) % modelsToTry.length : j;
+        const model = modelsToTry[modelIdx];
+        
         const ai = new GoogleGenAI({ apiKey });
         let retryCount = 0;
-        const maxRetries = 2;
+        const maxRetries = 1; // Giảm retry để chuyển đổi nhanh hơn
 
         while (retryCount <= maxRetries) {
           try {
+            console.log(`[API] Thử với KeyIndex=${keyIdx}, Model=${model} (Lần ${retryCount + 1})`);
             const response = await ai.models.generateContent({
               model: model,
               contents: contents,
@@ -171,25 +206,36 @@ export async function POST(req: Request) {
             }));
             
             success = true;
+            saveWorkingConfig(keyIdx, modelIdx);
             break;
           } catch (error: any) {
             lastError = error;
-            // Check for rate limit or service unavailable
             const errorStr = JSON.stringify(error).toLowerCase();
-            const isRetryable = errorStr.includes("429") || errorStr.includes("503") || errorStr.includes("quota") || errorStr.includes("unavailable");
             
-            if (isRetryable) {
+            // Nếu hết quota thì chuyển Key ngay lập tức
+            const isQuotaExceeded = errorStr.includes("429") || errorStr.includes("quota");
+            // Nếu quá tải thì chuyển Model/Key
+            const isOverloaded = errorStr.includes("503") || errorStr.includes("unavailable") || errorStr.includes("overloaded");
+
+            if (isQuotaExceeded) {
+              console.warn(`[API] KeyIndex=${keyIdx} hết quota, chuyển key tiếp theo...`);
+              break; // Thoát vòng lặp model để chuyển sang key tiếp theo
+            }
+
+            if (isOverloaded) {
               retryCount++;
               if (retryCount <= maxRetries) {
-                const waitTime = Math.pow(2, retryCount) * 1000;
-                console.warn(`Model ${model} bị lỗi retryable, đang thử lại lần ${retryCount} sau ${waitTime}ms...`);
+                const waitTime = 1000;
+                console.warn(`[API] Model ${model} quá tải, thử lại sau ${waitTime}ms...`);
                 await sleep(waitTime);
                 continue;
               }
+              console.warn(`[API] Model ${model} vẫn quá tải, chuyển sang model tiếp theo...`);
+              break; 
             }
             
-            console.error(`Lỗi với model ${model}:`, error);
-            break; // Thử model tiếp theo
+            console.error(`[API] Lỗi không xác định với model ${model}:`, error);
+            break; 
           }
         }
         if (success) break;
