@@ -47,9 +47,9 @@ export async function POST(req: Request) {
 
     const contents = [{ parts: [{ text: prompt }] }];
     const modelsToTry = [
-      "gemini-3.1-flash-lite-preview",
       "gemini-3-flash-preview",
-      "gemini-3.1-pro-preview"
+      "gemini-3.1-pro-preview",
+      "gemini-3.1-flash-lite-preview"
     ];
 
     let finalRecovery: any = null;

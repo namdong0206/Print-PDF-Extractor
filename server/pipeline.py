@@ -122,7 +122,7 @@ class NewspaperPipeline:
             prompt = f"Tiêu đề: {article['headline'].get('text', 'Không tiêu đề')}\nNội dung: {article['text']}\nHãy kiểm tra và trả về JSON: {{'headline': '...', 'content': '...'}}"
             try:
                 response = self.ai.models.generateContent(
-                    model="gemini-3.1-flash-lite-preview",
+                    model="gemini-3-flash-preview",
                     contents=prompt,
                     config={"responseMimeType": "application/json"}
                 )
