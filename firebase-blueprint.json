@@ -11,7 +11,7 @@
         "lead": { "type": "string" },
         "content": { "type": "array", "items": { "type": "string" } },
         "pageNumbers": { "type": "array", "items": { "type": "number" } },
-        "imageCaption": { "type": "array", "items": { "type": "string" } }
+        "imageCaption": { "type": "string" }
       },
       "required": ["id", "title", "content"]
     },

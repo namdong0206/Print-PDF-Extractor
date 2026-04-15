@@ -24,6 +24,9 @@ export interface Article {
   seePage: string;
   pageNumbers: number[];
   fileName?: string;
+  is_start?: boolean;
+  is_end?: boolean;
+  is_continued?: boolean;
 }
 
 export class QuotaExhaustedError extends Error {
@@ -64,10 +67,6 @@ const getLongestCommonSubstringLen = (s1: string, s2: string): number => {
 export const getTitleSimilarity = (t1: string, t2: string) => {
   const s1 = normalize(t1);
   const s2 = normalize(t2);
-  return getNormalizedTitleSimilarity(s1, s2);
-};
-
-export const getNormalizedTitleSimilarity = (s1: string, s2: string) => {
   if (s1 === s2) return 1;
   
   const minLen = Math.min(s1.length, s2.length);
@@ -81,26 +80,7 @@ export const getNormalizedTitleSimilarity = (s1: string, s2: string) => {
 
 // Hàm kiểm tra độ tương đồng phần đầu (ít nhất 80%)
 export const isSimilarTitle = (t1: string, t2: string) => {
-  const s1 = normalize(t1);
-  const s2 = normalize(t2);
-  
-  if (s1 === s2) return true;
-  
-  const maxLen = Math.max(s1.length, s2.length);
-  const minLen = Math.min(s1.length, s2.length);
-  
-  // Nếu độ lệch chiều dài > 25%, không thể tương đồng >= 80%
-  if (maxLen > 0 && (maxLen - minLen) / maxLen > 0.25) return false;
-  
-  return getNormalizedTitleSimilarity(s1, s2) >= 0.8;
-};
-
-export const hasPageCues = (seePage: string) => {
-  const cues = [
-    /xem trang (\d+)/i,
-    /tiếp theo trang (\d+)/i
-  ];
-  return cues.some(regex => regex.test(seePage));
+  return getTitleSimilarity(t1, t2) >= 0.8;
 };
 
 export function mergeArticles(articles: Article[]): Article[] {
@@ -165,26 +145,13 @@ export function mergeArticles(articles: Article[]): Article[] {
   };
 
   for (const article of articles) {
-    if (article.title.startsWith('[UNASSIGNED_BLOCKS]')) {
-      merged.push(article);
-      continue;
-    }
-
-    let existingIndex = merged.findIndex(a => {
-      if (a.title.startsWith('[UNASSIGNED_BLOCKS]')) return false;
-      return isSimilarTitle(a.title, article.title);
-    });
+    let existingIndex = merged.findIndex(a => isSimilarTitle(a.title, article.title));
     
     if (existingIndex === -1) {
       // Try to match by seePage cues if title matching fails but similarity is at least 30%
       existingIndex = merged.findIndex(a => {
         const similarity = getTitleSimilarity(a.title, article.title);
         if (similarity < 0.3) return false;
-
-        // BẮT BUỘC: Phải có chỉ dẫn trang mới được ghép
-        if (!hasPageCues(a.seePage || "") || !hasPageCues(article.seePage || "")) {
-          return false;
-        }
 
         const cleanSeePage = (s: string) => s.replace(/[()]/g, "").trim();
         const aSeePage = cleanSeePage(a.seePage || "");
@@ -225,18 +192,14 @@ export function mergeArticles(articles: Article[]): Article[] {
       const existing = merged[existingIndex];
       
       // Ghép nội dung, tránh lặp lại đoạn văn nếu AI trích xuất trùng
-      // VÀ xóa bỏ tiêu đề ở phần tiếp theo (kể cả khi tiêu đề nằm ở giữa hoặc có khoảng trắng)
-      const titleRegex = new RegExp(`^\\s*${existing.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'i');
-      const newContent = article.content
-        .map(p => p.replace(titleRegex, '').trim())
-        .filter(p => p.length > 0 && !existing.content.includes(p));
+      const newContent = article.content.filter(p => !existing.content.includes(p));
       
       // Xác định thứ tự ghép dựa trên semantic cues hoặc số trang
-      const isArticleContinuation = /tiếp theo trang/i.test(article.seePage || "");
-      const isArticleStart = /xem trang/i.test(article.seePage || "");
+      const isArticleContinuation = /tiếp theo trang|tiếp từ trang|tiếp theo/i.test(article.seePage || "");
+      const isArticleStart = /xem trang|xem tiếp trang|xem tiếp/i.test(article.seePage || "");
       
-      const isExistingContinuation = /tiếp theo trang/i.test(existing.seePage || "");
-      const isExistingStart = /xem trang/i.test(existing.seePage || "");
+      const isExistingContinuation = /tiếp theo trang|tiếp từ trang|tiếp theo/i.test(existing.seePage || "");
+      const isExistingStart = /xem trang|xem tiếp trang|xem tiếp/i.test(existing.seePage || "");
 
       let append = true;
       
@@ -266,6 +229,10 @@ export function mergeArticles(articles: Article[]): Article[] {
       }
       
       existing.pageNumbers = [...new Set([...existing.pageNumbers, ...article.pageNumbers])].sort((a, b) => a - b);
+      
+      existing.is_start = existing.is_start || article.is_start;
+      existing.is_end = existing.is_end || article.is_end;
+      existing.is_continued = existing.is_continued || article.is_continued;
       
       if (!existing.author && article.author) existing.author = article.author;
       if (!existing.imageCaption && article.imageCaption) existing.imageCaption = article.imageCaption;
@@ -346,14 +313,11 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
       // Tính toán khoảng cách X giữa kết thúc của currentLine và bắt đầu của nextItem
       const gap = nextItem.x - (currentLine.x + (currentLine.w || 0));
       
-      // Ngưỡng chẻ dọc (Vertical Split) dựa trên khoảng trống giữa các cột (giảm xuống 20 để tách cột nhạy hơn)
-      const minGap = 20; 
+      // Ngưỡng chẻ dọc (Vertical Split) dựa trên khoảng trống giữa các cột (mặc định 40)
+      const minGap = 40; 
       const isLargeGap = gap > minGap;
 
-      // Thêm điều kiện: Nếu là tiêu đề lớn, không bao giờ gom ngang
-      const isLargeHeadline = currentLine.fs > 20 || nextItem.fs > 20;
-
-      if (sameLine && !isLargeGap && !isLargeHeadline) {
+      if (sameLine && !isLargeGap) {
         currentLine.t += " " + nextItem.t;
         // Cập nhật chiều rộng tổng cộng của dòng
         currentLine.w = (nextItem.x + (nextItem.w || 0)) - currentLine.x;
@@ -368,17 +332,11 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
     const paragraphBlocks: TextBlock[] = [];
     let currentPara = { ...lineBlocks[0] };
 
-    // Helper để tính x không tính ký tự trắng
-    const getEffectiveX = (block: TextBlock) => {
-      const leadingSpaces = (block.t.match(/^\s*/) || [''])[0].length;
-      return block.x - (leadingSpaces * (block.fs * 0.3));
-    };
-
     for (let i = 1; i < lineBlocks.length; i++) {
       const nextLine = lineBlocks[i];
       
       // Cùng cột (x gần nhau)
-      const sameColumn = Math.abs(getEffectiveX(currentPara) - getEffectiveX(nextLine)) < 60;
+      const sameColumn = Math.abs(currentPara.x - nextLine.x) < 60;
       // Khoảng cách dòng (y gần nhau)
       const closeVertical = Math.abs(nextLine.y - (currentPara.y + currentPara.fs)) < 45;
       // Cùng kiểu font hoặc đều là font nhỏ (body text)
@@ -388,10 +346,7 @@ export async function extractTextBlocksWithMetadata(page: any): Promise<TextBloc
       // Tiêu đề (Headline) luôn đứng riêng
       const isHeadline = currentPara.fs > 15;
 
-      // Kiểm tra thụt đầu dòng bằng space (2+ spaces)
-      const hasIndentation = /^\s{2,}/.test(nextLine.t);
-
-      if (sameColumn && closeVertical && sameStyle && !isHeadline && !hasIndentation) {
+      if (sameColumn && closeVertical && sameStyle && !isHeadline) {
         currentPara.t += " " + nextLine.t;
       } else {
         paragraphBlocks.push(currentPara);
@@ -514,7 +469,7 @@ export async function extractArticlesHybrid(
   
   // Làm sạch dữ liệu gửi đi
   const cleanedZones = zones
-    .filter(zone => zone.type !== 'header' && zone.type !== 'footer')
+    .filter(zone => zone.type === 'article' || zone.type === 'unknown')
     .map(zone => {
       return {
         ...zone,
@@ -532,75 +487,49 @@ export async function extractArticlesHybrid(
     }))
   }));
 
-  const MAX_RETRIES = 3;
-  const RETRY_DELAY_MS = 2000;
+  const response = await fetch('/api/extract-articles', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      optimizedZones,
+      pageNumber,
+      fileName,
+      base64Image
+    }),
+  });
 
-  let lastError: Error | null = null;
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(new Error("Request timed out after 5 minutes")), 300000); // 5 minute timeout
-
-      const response = await fetch('/api/extract-articles', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          optimizedZones,
-          pageNumber,
-          fileName,
-          base64Image
-        }),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-      const responseText = await response.text();
-      
-      // Check if response is HTML (server starting up)
-      if (responseText.trim().startsWith('<!doctype html>')) {
-        console.warn(`[DEBUG] Server returned HTML (attempt ${attempt + 1}/${MAX_RETRIES}), retrying...`);
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-        continue;
-      }
-
-      if (!response.ok) {
-        console.error(`[DEBUG] API Error (${response.status}):`, responseText.substring(0, 500));
-        throw new Error(`Failed to extract articles from server: ${response.status} ${response.statusText}`);
-      }
-
-      const { articles } = JSON.parse(responseText);
-      
-      // Map to Article type and add missing fields
-      const finalArticles: Article[] = articles.map((art: any, i: number) => {
-        const article: Article = {
-          id: `${fileName}-${pageNumber}-${i}`,
-          articleRegionId: "",
-          title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
-          author: art.author && art.author !== 'null' ? art.author : "",
-          content: (Array.isArray(art.content) ? art.content : [])
-            .map((p: string) => p.trim())
-            .filter((p: string) => p.length > 0 && p !== 'null'),
-          imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
-          seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
-          pageNumbers: [pageNumber],
-          fileName: fileName
-        };
-        
-        if (onArticleParsed) {
-          onArticleParsed(article);
-        }
-        return article;
-      });
-
-      return finalArticles;
-    } catch (error) {
-      console.error(`[DEBUG] Attempt ${attempt + 1} failed:`, error);
-      lastError = error instanceof Error ? error : new Error(String(error));
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-    }
+  if (!response.ok) {
+    throw new Error('Failed to extract articles from server');
   }
-  
-  throw lastError || new Error("Failed to extract articles after retries");
+
+  const { articles } = await response.json();
+
+  // Map to Article type and add missing fields
+  const finalArticles: Article[] = articles.map((art: any, i: number) => {
+    const article: Article = {
+      id: `${fileName}-${pageNumber}-${i}`,
+      articleRegionId: "",
+      title: art.title && art.title !== 'null' ? art.title : "Không có tiêu đề",
+      author: art.author && art.author !== 'null' ? art.author : "",
+      content: (Array.isArray(art.content) ? art.content : [])
+        .map((p: string) => p.trim())
+        .filter((p: string) => p.length > 0 && p !== 'null'),
+      imageCaption: art.imageCaption && art.imageCaption !== 'null' ? art.imageCaption : "",
+      seePage: art.seePage && art.seePage !== 'null' ? art.seePage : "",
+      pageNumbers: [pageNumber],
+      fileName: fileName,
+      is_start: !!art.is_start,
+      is_end: !!art.is_end,
+      is_continued: !!art.is_continued
+    };
+    
+    if (onArticleParsed) {
+      onArticleParsed(article);
+    }
+    return article;
+  });
+
+  return finalArticles;
 }

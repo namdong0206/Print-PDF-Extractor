@@ -20,29 +20,12 @@ const nextConfig: NextConfig = {
     ],
   },
   transpilePackages: ['motion'],
-  experimental: {
-    esmExternals: 'loose',
-  },
+  serverExternalPackages: ['pdfjs-dist'],
   webpack: (config, {dev, isServer}) => {
     // Fix for pdfjs-dist
     if (!isServer) {
       config.resolve.alias.canvas = false;
     }
-
-    config.module.rules.push({
-      test: /\.mjs$/,
-      include: /node_modules/,
-      type: 'javascript/auto',
-    });
-
-    // Handle PDF.js worker
-    config.module.rules.push({
-      test: /pdf\.worker\.(min\.)?m?js$/,
-      type: 'asset/resource',
-      generator: {
-        filename: 'static/worker/[name].[hash][ext]',
-      },
-    });
 
     // HMR is disabled in AI Studio via DISABLE_HMR env var.
     // Do not modifyâfile watching is disabled to prevent flickering during agent edits.

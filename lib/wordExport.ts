@@ -71,7 +71,7 @@ export const generateWordDocument = async (article: Article): Promise<Blob> => {
   });
 
   // Image Caption
-  if (article.imageCaption && article.imageCaption.length > 0) {
+  if (article.imageCaption && article.imageCaption !== 'null') {
     children.push(
       new Paragraph({
         children: [

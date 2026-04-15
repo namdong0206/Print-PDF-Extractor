@@ -24,11 +24,11 @@ class NewspaperPipeline:
             articles_on_page = self.process_page(img_path)
             
             if incomplete_article:
-                if self._is_match(incomplete_article, articles_on_page[0]):
-                    articles_on_page[0]['content'] = incomplete_article['content'] + articles_on_page[0]['content']
+                if incomplete_article.get('is_end') and articles_on_page and articles_on_page[0].get('is_start'):
+                    articles_on_page[0]['text'] = incomplete_article['text'] + "\n" + articles_on_page[0]['text']
                     incomplete_article = None
             
-            if articles_on_page and articles_on_page[-1].get('is_continued'):
+            if articles_on_page and articles_on_page[-1].get('is_end'):
                 incomplete_article = articles_on_page.pop()
                 
             all_articles.extend(articles_on_page)
@@ -42,9 +42,25 @@ class NewspaperPipeline:
         articles = self._group_and_stitch(detections, w, h)
         
         for article in articles:
-            article['text'] = self._extract_and_clean(article, img)
+            headline_text = self._extract_text_from_element(article['headline'], img)
+            content_text = self._extract_and_clean(article, img)
+            
+            # Check if headline is sub-heading
+            if len(headline_text) > 0 and len(headline_text) < 50 and headline_text.isupper():
+                # Move to content
+                article['text'] = headline_text + "\n" + content_text
+                article['headline'] = {"class": "unknown", "bbox": [0,0,0,0], "text": "Không tiêu đề"}
+            else:
+                article['headline']['text'] = headline_text
+                article['text'] = content_text
             
         return self._verify_with_gemini(articles)
+
+    def _extract_text_from_element(self, element, img):
+        x1, y1, x2, y2 = map(int, element['bbox'])
+        crop = img[max(0, y1):y2, max(0, x1):x2]
+        text_results = self.reader.readtext(crop, detail=0)
+        return " ".join(text_results)
 
     def _detect_layout(self, image_path):
         results = self.model.predict(image_path, conf=0.5, verbose=False)
@@ -111,7 +127,21 @@ class NewspaperPipeline:
             text_results = self.reader.readtext(crop, detail=0)
             full_text += " ".join(text_results) + "\n"
         
-        patterns = [r"\(\s*Tiếp theo trang\s*\d+\s*\)", r"\(\s*Xem tiếp trang\s*\d+\s*\)", r"Ảnh:\s*.*"]
+        # Detect markers
+        article['is_start'] = bool(re.search(r"\(\s*XEM TRANG", full_text, re.IGNORECASE))
+        article['is_end'] = bool(re.search(r"\(\s*Tiếp theo trang", full_text, re.IGNORECASE))
+            
+        # Sub-headings: short, all-caps, separate paragraph
+        lines = full_text.split('\n')
+        new_content = []
+        for line in lines:
+            if len(line) > 0 and len(line) < 50 and line.isupper():
+                new_content.append(line)
+            else:
+                new_content.append(line)
+        full_text = "\n".join(new_content)
+        
+        patterns = [r"\(\s*Tiếp theo trang\s*\d+\s*\)", r"\(\s*Xem tiếp trang\s*\d+\s*\)", r"\(\s*XEM TRANG\s*\d+\s*\)", r"Ảnh:\s*.*"]
         for p in patterns:
             full_text = re.sub(p, "", full_text, flags=re.IGNORECASE)
         return full_text.strip()
@@ -119,7 +149,7 @@ class NewspaperPipeline:
     def _verify_with_gemini(self, articles):
         final_output = []
         for article in articles:
-            prompt = f"Tiêu đề: {article['headline'].get('text', 'Không tiêu đề')}\nNội dung: {article['text']}\nHãy kiểm tra và trả về JSON: {{'headline': '...', 'content': '...'}}"
+            prompt = f"Tiêu đề: {article['headline'].get('text', 'Không tiêu đề')}\nNội dung: {article['text']}\nHãy kiểm tra và trả về JSON: {{'headline': '...', 'content': '...', 'is_start': {article.get('is_start', False)}, 'is_end': {article.get('is_end', False)}, 'is_continued': {article.get('is_continued', False)}}}"
             try:
                 response = self.ai.models.generateContent(
                     model="gemini-3-flash-preview",

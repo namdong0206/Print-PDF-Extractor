@@ -199,12 +199,9 @@ function NewspaperLayoutContent() {
   const [hlaZones, setHlaZones] = useState<HLAZone[]>([]);
   
   const filteredArticles = useMemo(() => {
-    const filtered = !filteredFile ? articles : articles.filter(a => a.fileName === filteredFile.name);
-    if (isExtracting) {
-        return filtered.filter(a => !a.is_continued);
-    }
-    return filtered;
-  }, [articles, filteredFile, isExtracting]);
+    if (!filteredFile) return articles;
+    return articles.filter(a => a.fileName === filteredFile.name);
+  }, [articles, filteredFile]);
   
   const [pageSize, setPageSize] = useState({ width: 600, height: 800 });
   const [processingTime, setProcessingTime] = useState<number | null>(null);
@@ -789,21 +786,6 @@ function NewspaperLayoutContent() {
               {formatTime(Math.floor(processingTime))}
             </div>
           )}
-          <button 
-            onClick={async () => {
-              localStorage.removeItem('extracted_articles');
-              await clearOldArticles();
-              setArticles([]);
-              setFiles([]);
-              setCompletedFileIndices(new Set());
-              setProcessingFileIndices(new Set());
-              setToastMessage("Đã xóa dữ liệu phiên làm việc cũ");
-              setTimeout(() => setToastMessage(null), 3000);
-            }}
-            className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-full hover:bg-gray-200 transition-colors text-sm font-medium"
-          >
-            Phiên làm việc mới
-          </button>
           <button 
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 bg-[#1A1A1A] text-white px-4 py-2 rounded-full hover:bg-black transition-colors text-sm font-medium"
